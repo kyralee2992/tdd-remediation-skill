@@ -34,6 +34,7 @@ node index.js
 | `--claude` | Use `.claude/` instead of `.agents/` as the skill directory |
 | `--with-hooks` | Install a pre-commit hook that blocks commits if security tests fail |
 | `--skip-scan` | Skip the automatic vulnerability scan on install |
+| `--scan-only` | Run the vulnerability scan without installing anything |
 
 **Install to a Claude Code project with pre-commit protection:**
 ```bash

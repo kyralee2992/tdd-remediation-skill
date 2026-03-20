@@ -9,13 +9,16 @@ const isLocal = args.includes('--local');
 const isClaude = args.includes('--claude');
 const withHooks = args.includes('--with-hooks');
 const skipScan = args.includes('--skip-scan');
+const scanOnly = args.includes('--scan-only');
 
 const agentBaseDir = isLocal ? process.cwd() : os.homedir();
 const agentDirName = isClaude ? '.claude' : '.agents';
 const projectDir = process.cwd();
 
 const targetSkillDir = path.join(agentBaseDir, agentDirName, 'skills', 'tdd-remediation');
-const targetWorkflowDir = path.join(agentBaseDir, agentDirName, 'workflows');
+const targetWorkflowDir = isClaude
+  ? path.join(agentBaseDir, agentDirName, 'commands')
+  : path.join(agentBaseDir, agentDirName, 'workflows');
 
 // ─── 1. Framework Detection ──────────────────────────────────────────────────
 
@@ -127,7 +130,17 @@ function printFindings(findings) {
   console.log('\n   Run /tdd-audit in your agent to remediate.\n');
 }
 
-// ─── 4. Install Skill Files ───────────────────────────────────────────────────
+// ─── 4. Scan-only early exit ──────────────────────────────────────────────────
+
+if (scanOnly) {
+  process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
+  const findings = quickScan();
+  process.stdout.write('\n');
+  printFindings(findings);
+  process.exit(0);
+}
+
+// ─── 5. Install Skill Files ───────────────────────────────────────────────────
 
 console.log(`\nInstalling TDD Remediation Skill (${isLocal ? 'local' : 'global'}, framework: ${framework}, test dir: ${testBaseDir}/)...\n`);
 
