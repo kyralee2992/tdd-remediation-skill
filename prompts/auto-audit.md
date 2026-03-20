@@ -101,7 +101,7 @@ Ask the user to confirm the list before beginning remediation. If they say "fix 
 
 For **each** confirmed vulnerability, rigorously apply the RED-GREEN-REFACTOR protocol in order:
 
-1. **[RED](./red-phase.md)**: Write the exploit test in `__tests__/security/` and run it to prove the vulnerability exists (test must fail).
+1. **[RED](./red-phase.md)**: Write the exploit test in the project's security test directory (e.g., `tests/security/`, `__tests__/security/`, `test/security/` — wherever the installer scaffolded the boilerplate) and run it to prove the vulnerability exists (test must fail).
 2. **[GREEN](./green-phase.md)**: Apply the targeted patch. Run the exploit test — it must now pass.
 3. **[REFACTOR](./refactor-phase.md)**: Run the full test suite. All tests must be green before moving on.
 

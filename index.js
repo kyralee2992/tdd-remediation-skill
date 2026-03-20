@@ -16,7 +16,6 @@ const projectDir = process.cwd();
 
 const targetSkillDir = path.join(agentBaseDir, agentDirName, 'skills', 'tdd-remediation');
 const targetWorkflowDir = path.join(agentBaseDir, agentDirName, 'workflows');
-const targetTestDir = path.join(projectDir, '__tests__', 'security');
 
 // ─── 1. Framework Detection ──────────────────────────────────────────────────
 
@@ -43,7 +42,24 @@ function detectFramework() {
 
 const framework = detectFramework();
 
-// ─── 2. Quick Scan ───────────────────────────────────────────────────────────
+// ─── 2. Test Directory Detection ─────────────────────────────────────────────
+
+function detectTestBaseDir() {
+  // Respect an existing convention before inventing one
+  const candidates = ['__tests__', 'tests', 'test', 'spec'];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(projectDir, dir))) return dir;
+  }
+  // Framework-informed defaults when no directory exists yet
+  if (framework === 'pytest') return 'tests';
+  if (framework === 'go') return 'test';
+  return '__tests__';
+}
+
+const testBaseDir = detectTestBaseDir();
+const targetTestDir = path.join(projectDir, testBaseDir, 'security');
+
+// ─── 3. Quick Scan ───────────────────────────────────────────────────────────
 
 const VULN_PATTERNS = [
   { name: 'SQL Injection',     severity: 'CRITICAL', pattern: /(`SELECT[^`]*\$\{|"SELECT[^"]*"\s*\+|execute\(f"|cursor\.execute\(.*%s|\.query\(`[^`]*\$\{)/i },
@@ -111,9 +127,9 @@ function printFindings(findings) {
   console.log('\n   Run /tdd-audit in your agent to remediate.\n');
 }
 
-// ─── 3. Install Skill Files ───────────────────────────────────────────────────
+// ─── 4. Install Skill Files ───────────────────────────────────────────────────
 
-console.log(`\nInstalling TDD Remediation Skill (${isLocal ? 'local' : 'global'}, framework: ${framework})...\n`);
+console.log(`\nInstalling TDD Remediation Skill (${isLocal ? 'local' : 'global'}, framework: ${framework}, test dir: ${testBaseDir}/)...\n`);
 
 if (!fs.existsSync(targetSkillDir)) fs.mkdirSync(targetSkillDir, { recursive: true });
 
@@ -123,7 +139,7 @@ for (const item of ['SKILL.md', 'prompts', 'templates']) {
   if (fs.existsSync(src)) fs.cpSync(src, dest, { recursive: true });
 }
 
-// ─── 4. Scaffold Security Test Boilerplate ────────────────────────────────────
+// ─── 5. Scaffold Security Test Boilerplate ────────────────────────────────────
 
 if (!fs.existsSync(targetTestDir)) {
   fs.mkdirSync(targetTestDir, { recursive: true });
@@ -147,7 +163,7 @@ if (!fs.existsSync(destTest) && fs.existsSync(srcTest)) {
   console.log(`✅ Scaffolded ${path.relative(projectDir, destTest)}`);
 }
 
-// ─── 5. Install Workflow Shortcode ────────────────────────────────────────────
+// ─── 6. Install Workflow Shortcode ────────────────────────────────────────────
 
 if (!fs.existsSync(targetWorkflowDir)) fs.mkdirSync(targetWorkflowDir, { recursive: true });
 const srcWorkflow = path.join(__dirname, 'workflows', 'tdd-audit.md');
@@ -157,7 +173,7 @@ if (fs.existsSync(srcWorkflow)) {
   console.log(`✅ Installed /tdd-audit workflow shortcode`);
 }
 
-// ─── 6. Inject test:security into package.json ────────────────────────────────
+// ─── 7. Inject test:security into package.json ────────────────────────────────
 
 const pkgPath = path.join(projectDir, 'package.json');
 if (framework !== 'pytest' && framework !== 'go' && fs.existsSync(pkgPath)) {
@@ -165,11 +181,12 @@ if (framework !== 'pytest' && framework !== 'go' && fs.existsSync(pkgPath)) {
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
     if (!pkg.scripts?.['test:security']) {
       pkg.scripts = pkg.scripts || {};
+      const secDir = `${testBaseDir}/security`;
       pkg.scripts['test:security'] = {
-        jest:   'jest --testPathPattern=__tests__/security --forceExit',
-        vitest: 'vitest run __tests__/security',
-        mocha:  "mocha '__tests__/security/**/*.spec.js'",
-      }[framework] || 'jest --testPathPattern=__tests__/security --forceExit';
+        jest:   `jest --testPathPattern=${secDir} --forceExit`,
+        vitest: `vitest run ${secDir}`,
+        mocha:  `mocha '${secDir}/**/*.spec.js'`,
+      }[framework] || `jest --testPathPattern=${secDir} --forceExit`;
       fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
       console.log(`✅ Added "test:security" script to package.json`);
     } else {
@@ -180,7 +197,7 @@ if (framework !== 'pytest' && framework !== 'go' && fs.existsSync(pkgPath)) {
   }
 }
 
-// ─── 7. Scaffold CI Workflow ─────────────────────────────────────────────────
+// ─── 8. Scaffold CI Workflow ─────────────────────────────────────────────────
 
 const ciWorkflowDir = path.join(projectDir, '.github', 'workflows');
 const ciWorkflowPath = path.join(ciWorkflowDir, 'security-tests.yml');
@@ -203,7 +220,7 @@ if (!fs.existsSync(ciWorkflowPath)) {
   console.log(`   .github/workflows/security-tests.yml already exists — skipped`);
 }
 
-// ─── 8. Pre-commit Hook (opt-in) ─────────────────────────────────────────────
+// ─── 9. Pre-commit Hook (opt-in) ─────────────────────────────────────────────
 
 if (withHooks) {
   const gitDir = path.join(projectDir, '.git');
@@ -241,7 +258,7 @@ if (withHooks) {
   }
 }
 
-// ─── 9. Quick Scan ───────────────────────────────────────────────────────────
+// ─── 10. Quick Scan ──────────────────────────────────────────────────────────
 
 if (!skipScan) {
   process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
