@@ -1,0 +1,14 @@
+{
+  "name": "@lhi/tdd-remediation",
+  "version": "1.0.0",
+  "description": "Anti-Gravity Skill for TDD Remediation",
+  "main": "index.js",
+  "bin": {
+    "install-tdd-remediation": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+}
