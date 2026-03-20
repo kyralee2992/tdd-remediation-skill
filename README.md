@@ -1,4 +1,4 @@
-# @lhi/tdd-remediation
+# @lhi/tdd-audit
 
 Anti-Gravity Skill for TDD Remediation. This package securely patches code vulnerabilities by utilizing a Test-Driven Remediation (Red-Green-Refactor) protocol.
 
@@ -7,7 +7,7 @@ Anti-Gravity Skill for TDD Remediation. This package securely patches code vulne
 You can install this skill globally so that it is available to the Anti-Gravity agent across all of your projects:
 
 ```bash
-npx @lhi/tdd-remediation
+npx @lhi/tdd-audit
 ```
 
 Or run it directly if you have cloned the repository:
@@ -21,7 +21,7 @@ node index.js
 If you prefer to install the skill and its workflow strictly to your current workspace instead of globally, use the `--local` flag:
 
 ```bash
-npx @lhi/tdd-remediation --local
+npx @lhi/tdd-audit --local
 # or
 node index.js --local
 ```
@@ -46,4 +46,4 @@ This will instruct the agent to:
 
 ## License
 
-ISC
+MIT
