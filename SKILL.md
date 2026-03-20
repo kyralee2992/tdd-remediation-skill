@@ -9,13 +9,13 @@ Applying Test-Driven Development (TDD) to code that has already been generated r
 
 ## Autonomous Audit Mode
 If the user asks you to "Run the TDD Remediation Auto-Audit" or asks you to implement this on your own:
-1. **Explore**: Proactively use your tools (like `grep_search`, `view_file`, and `list_dir`) to scan the user's repository. Focus on `controllers/`, `routes/`, `api/`, and database files. Search for anti-patterns: missing authorization checks, unparameterized SQL queries, and lack of sanitization.
-2. **Plan**: Identify the active vulnerabilities and outline them to the user.
-3. **Self-Implement**: For *each* vulnerability found, autonomously execute the complete 3-phase protocol:
+1. **Explore**: Proactively use `Glob`, `Grep`, and `Read` to scan the repository. Focus on `controllers/`, `routes/`, `api/`, `middleware/`, and database files. Search for anti-patterns: unparameterized SQL queries, missing ownership checks, unsafe HTML rendering, and command injection sinks. Full search patterns are in [auto-audit.md](./prompts/auto-audit.md).
+2. **Plan**: Present a structured list of vulnerabilities (grouped by severity: CRITICAL / HIGH / MEDIUM / LOW) and get confirmation before making any changes.
+3. **Self-Implement**: For *each* confirmed vulnerability, autonomously execute the complete 3-phase protocol:
    - **[Phase 1 (Red)](./prompts/red-phase.md)**: Write the exploit test ensuring it fails.
    - **[Phase 2 (Green)](./prompts/green-phase.md)**: Write the security patch ensuring the test passes.
-   - **[Phase 3 (Refactor)](./prompts/refactor-phase.md)**: Clean the code and ensure no business logic broke.
-Move methodically through the vulnerabilities one by one.
+   - **[Phase 3 (Refactor)](./prompts/refactor-phase.md)**: Run the full test suite and ensure no business logic broke.
+Move methodically through vulnerabilities one by one, CRITICAL-first. Do not advance until the current vulnerability is fully remediated.
 
 ---
 

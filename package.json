@@ -1,13 +1,40 @@
 {
   "name": "@lhi/tdd-audit",
   "version": "1.0.0",
-  "description": "Anti-Gravity Skill for TDD Remediation",
+  "description": "Anti-Gravity Skill for TDD Remediation. Patches security vulnerabilities using a Red-Green-Refactor protocol with automated exploit tests.",
   "main": "index.js",
   "bin": {
     "tdd-audit": "./index.js"
   },
+  "files": [
+    "index.js",
+    "SKILL.md",
+    "prompts/",
+    "templates/",
+    "workflows/",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node index.js --local --skip-scan && echo 'Smoke test passed'",
+    "test:security": "jest --testPathPattern=__tests__/security --forceExit"
+  },
+  "keywords": [
+    "security",
+    "tdd",
+    "test-driven-development",
+    "vulnerability",
+    "remediation",
+    "exploit",
+    "red-green-refactor",
+    "owasp",
+    "audit",
+    "claude",
+    "ai-agent",
+    "skill"
+  ],
+  "engines": {
+    "node": ">=16.7.0"
   },
   "author": "Kyra Lee",
   "license": "MIT"

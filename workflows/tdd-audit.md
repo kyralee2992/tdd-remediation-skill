@@ -1,6 +1,16 @@
 ---
 description: Run the complete TDD Remediation Autonomous Audit
 ---
-Please use the TDD Remediation Protocol Auto-Audit skill (`.agents/skills/tdd-remediation/SKILL.md`) to secure this repository.
+Please use the TDD Remediation Protocol Auto-Audit skill (located in the `skills/tdd-remediation` folder) to secure this repository.
 
-Begin by exploring the structure to find any vulnerabilities or anti-patterns in the codebase. Then, for every issue you find, show me the list of vulnerabilities, and rigorously apply the Red-Green-Refactor loop to write the exploit tests, patch the flaws, and ensure no regressions occurred.
+Follow the full Auto-Audit protocol from `auto-audit.md`:
+
+1. **Explore** the codebase using Glob, Grep, and Read. Focus on controllers, routes, middleware, and database layers. Search for the vulnerability patterns defined in Phase 0 of the auto-audit prompt.
+2. **Present** a structured Audit Report, grouped by severity (CRITICAL / HIGH / MEDIUM / LOW), and wait for my confirmation before making any changes.
+3. **Remediate** each confirmed vulnerability one at a time, top-down by severity, applying the full Red-Green-Refactor loop:
+   - Write the exploit test (Red — must fail)
+   - Apply the patch (Green — test must pass)
+   - Run the full suite (Refactor — no regressions)
+4. **Report** a final Remediation Summary table when all issues are addressed.
+
+Do not skip steps. Do not advance to the next vulnerability until the current one is fully proven closed by a passing test.
