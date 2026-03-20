@@ -1,6 +1,6 @@
 {
   "name": "@lhi/tdd-audit",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Anti-Gravity Skill for TDD Remediation. Patches security vulnerabilities using a Red-Green-Refactor protocol with automated exploit tests.",
   "main": "index.js",
   "bin": {
