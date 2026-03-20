@@ -208,3 +208,167 @@ function requireAuth(req, res, next) {
   }
 }
 ```
+
+---
+
+### React: XSS via dangerouslySetInnerHTML
+
+**Root cause:** User-generated content is passed directly to `dangerouslySetInnerHTML` without sanitization.
+
+**Fix:** Sanitize with DOMPurify before rendering. Never pass raw user input to `dangerouslySetInnerHTML`.
+
+```tsx
+// BEFORE (vulnerable)
+<div dangerouslySetInnerHTML={{ __html: userContent }} />
+
+// AFTER
+import DOMPurify from 'dompurify';
+
+const clean = DOMPurify.sanitize(userContent, {
+  ALLOWED_TAGS: ['b', 'i', 'em', 'strong', 'a'],
+  ALLOWED_ATTR: ['href'],
+});
+<div dangerouslySetInnerHTML={{ __html: clean }} />
+```
+
+**Install:** `npm install dompurify @types/dompurify`
+For SSR (Next.js): `npm install isomorphic-dompurify` instead.
+
+---
+
+### Next.js: Missing Auth on API Routes
+
+**Root cause:** API route handlers in `pages/api/` or `app/api/` are publicly accessible with no authentication check.
+
+**Fix — Option A (per-route wrapper):**
+```typescript
+// lib/withAuth.ts
+import jwt from 'jsonwebtoken';
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
+
+export function withAuth(handler: NextApiHandler): NextApiHandler {
+  return async (req: NextApiRequest, res: NextApiResponse) => {
+    const token = req.headers.authorization?.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      (req as any).user = jwt.verify(token, process.env.JWT_SECRET!);
+      return handler(req, res);
+    } catch {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+  };
+}
+
+// pages/api/user.ts
+import { withAuth } from '../../lib/withAuth';
+export default withAuth((req, res) => res.json({ user: (req as any).user }));
+```
+
+**Fix — Option B (global middleware, preferred for App Router):**
+```typescript
+// middleware.ts (root of project — protects all /api routes)
+import { NextResponse, type NextRequest } from 'next/server';
+import { jwtVerify } from 'jose';
+
+export async function middleware(request: NextRequest) {
+  const token = request.headers.get('authorization')?.split(' ')[1];
+  if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  try {
+    await jwtVerify(token, new TextEncoder().encode(process.env.JWT_SECRET!));
+    return NextResponse.next();
+  } catch {
+    return NextResponse.json({ error: 'Invalid token' }, { status: 401 });
+  }
+}
+
+export const config = { matcher: '/api/:path*' };
+```
+
+---
+
+### React Native / Expo: Sensitive Storage Migration
+
+**Root cause:** Auth tokens stored in `AsyncStorage` are unencrypted and readable on rooted/jailbroken devices.
+
+**Fix:** Replace with `expo-secure-store`, which uses iOS Keychain and Android EncryptedSharedPreferences.
+
+```javascript
+// BEFORE (vulnerable)
+import AsyncStorage from '@react-native-async-storage/async-storage';
+await AsyncStorage.setItem('token', userToken);
+const token = await AsyncStorage.getItem('token');
+
+// AFTER
+import * as SecureStore from 'expo-secure-store';
+await SecureStore.setItemAsync('token', userToken);
+const token = await SecureStore.getItemAsync('token');
+// On logout:
+await SecureStore.deleteItemAsync('token');
+```
+
+**Install:** `npx expo install expo-secure-store`
+**Note:** `SecureStore` is device-bound and not available in Expo Go web preview — check `SecureStore.isAvailableAsync()` for web fallbacks.
+
+---
+
+### Flutter: Sensitive Storage Migration
+
+**Root cause:** Auth tokens stored in `SharedPreferences` are plain text in app storage — readable on rooted/jailbroken devices.
+
+**Fix:** Replace with `flutter_secure_storage`, which uses iOS Keychain and Android EncryptedSharedPreferences.
+
+```dart
+// BEFORE (vulnerable)
+final prefs = await SharedPreferences.getInstance();
+await prefs.setString('token', userToken);
+final token = prefs.getString('token');
+
+// AFTER
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+const _storage = FlutterSecureStorage();
+await _storage.write(key: 'token', value: userToken);
+final token = await _storage.read(key: 'token');
+// On logout:
+await _storage.delete(key: 'token');
+```
+
+**pubspec.yaml:**
+```yaml
+dependencies:
+  flutter_secure_storage: ^9.0.0
+```
+
+---
+
+### TLS Bypass Fix (Node.js + Flutter/Dart)
+
+**Root cause:** TLS certificate verification is explicitly disabled, allowing man-in-the-middle attacks.
+
+**Fix:** Remove the bypass entirely. For internal CAs, provide the cert — don't disable verification.
+
+```javascript
+// BEFORE (vulnerable — Node.js)
+const https = require('https');
+const agent = new https.Agent({ rejectUnauthorized: false }); // ❌
+
+// AFTER — remove the override; default is rejectUnauthorized: true ✅
+const agent = new https.Agent();
+
+// For internal/self-signed CAs in staging environments:
+// NODE_EXTRA_CA_CERTS=/path/to/internal-ca.crt node server.js
+```
+
+```dart
+// BEFORE (vulnerable — Flutter/Dart)
+final client = HttpClient()
+  ..badCertificateCallback = (cert, host, port) => true; // ❌
+
+// AFTER — remove the callback (default validates certs) ✅
+final client = HttpClient();
+
+// For a private CA in integration tests only:
+final context = SecurityContext()
+  ..setTrustedCertificates('test/certs/ca.crt');
+final client = HttpClient(context: context);
+```

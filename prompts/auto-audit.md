@@ -6,10 +6,28 @@ When invoked in Auto-Audit mode, proactively secure the user's entire repository
 
 ### 0a. Explore the Architecture
 Use `Glob` and `Read` to understand the project structure. Focus on:
+
+**Backend / API**
 - `controllers/`, `routes/`, `api/`, `handlers/` — request entry points
 - `services/`, `models/`, `db/`, `repositories/` — data access
 - `middleware/`, `utils/`, `helpers/`, `lib/` — shared utilities
 - Config files: `*.env`, `config.js`, `settings.py` — secrets and security settings
+
+**React / Next.js**
+- `pages/api/`, `app/api/` — Next.js API routes (check for missing auth)
+- `components/`, `app/`, `pages/` — UI components (check for `dangerouslySetInnerHTML`, `eval`)
+- `hooks/`, `context/`, `store/` — state management (check for sensitive data leakage)
+
+**React Native / Expo**
+- `screens/`, `navigation/`, `app/` — screen components (check `route.params` usage)
+- `services/`, `api/`, `utils/` — API calls (check TLS config, token storage)
+- `app.json`, `app.config.js` — Expo config (check for embedded keys)
+
+**Flutter / Dart**
+- `lib/screens/`, `lib/pages/`, `lib/views/` — UI layer
+- `lib/services/`, `lib/api/`, `lib/repositories/` — data layer (check HTTP client config)
+- `lib/utils/`, `lib/helpers/` — shared utilities
+- `pubspec.yaml` — dependency audit
 
 ### 0b. Search for Anti-Patterns
 Use `Grep` with the following patterns to surface candidates. Read the matched files to confirm before reporting.
@@ -69,6 +87,51 @@ Bearer.*hardcoded    # hardcoded tokens
 ```
 router\.(post|put|delete)  # mutation routes (check for rate-limit middleware)
 app\.post\(           # POST handlers (check for rate-limit middleware)
+```
+
+**Sensitive Storage (React / React Native / Expo)**
+```
+AsyncStorage\.setItem.*token    # token stored in unencrypted AsyncStorage
+localStorage\.setItem.*token    # token stored in localStorage (XSS-accessible)
+AsyncStorage\.setItem.*password # password stored in plain AsyncStorage
+SecureStore vs AsyncStorage     # confirm sensitive values use expo-secure-store
+```
+
+**TLS / Certificate Bypass**
+```
+rejectUnauthorized.*false       # Node.js TLS verification disabled
+badCertificateCallback.*true    # Dart/Flutter TLS bypass
+NODE_TLS_REJECT_UNAUTHORIZED=0  # env-level TLS disable
+```
+
+**Hardcoded Secrets (vibecoded apps)**
+```
+API_KEY\s*=\s*['"][A-Za-z0-9]{20,}   # hardcoded API key in source
+PRIVATE_KEY\s*=\s*['"]               # private key in source
+SECRET_KEY\s*=\s*['"]                # secret embedded in code
+process\.env\.\w+\s*\|\|\s*['"]      # env var with hardcoded fallback
+```
+
+**Next.js API Route Auth**
+```
+export.*async.*handler             # Next.js API route — check for missing auth guard
+export default.*req.*res           # pages/api handler — verify authentication
+getServerSideProps.*params         # SSR with params — check for injection
+```
+
+**React Native / Expo Navigation Injection**
+```
+route\.params\.\w+.*query          # route param passed to DB/API query
+route\.params\.\w+.*fetch          # route param used in fetch URL
+navigation\.navigate.*params       # user-controlled navigation params
+```
+
+**Flutter / Dart**
+```
+http\.get\(                         # raw http call — check for TLS config
+http\.post\(                        # raw http call — check for TLS config
+SharedPreferences.*setString.*token # token in unencrypted SharedPreferences
+Platform\.environment\[            # env access in Flutter — check for secrets
 ```
 
 ### 0c. Present Findings

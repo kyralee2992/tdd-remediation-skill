@@ -22,6 +22,22 @@ Go through this checklist before closing the vulnerability:
 - [ ] **Performance acceptable** — the patch doesn't add unbounded DB queries or blocking I/O
 - [ ] **No secrets in code** — patch doesn't hardcode keys, tokens, or credentials
 
+**React / Next.js additions:**
+- [ ] **`dangerouslySetInnerHTML` removed or wrapped** — confirm DOMPurify is imported and called before all remaining usages
+- [ ] **Next.js middleware matcher is correct** — `/api/:path*` or tighter; public routes (health checks, webhooks) still reachable
+- [ ] **`app.json` / `.env.local` clean** — no API keys or secrets committed; `*.env` is in `.gitignore`
+
+**React Native / Expo additions:**
+- [ ] **`AsyncStorage` fully migrated** — no remaining `setItem('token', ...)` calls; `expo-secure-store` in `package.json`
+- [ ] **Offline token refresh still works** — `SecureStore.getItemAsync` is called in the right lifecycle (not before `SecureStore.isAvailableAsync()` on web)
+- [ ] **Deep link params validated** — any `route.params` passed to API calls are sanitized or type-checked
+
+**Flutter additions:**
+- [ ] **`flutter_secure_storage` in `pubspec.yaml`** — dependency present and `flutter pub get` ran
+- [ ] **No remaining `SharedPreferences` calls for sensitive keys** — grep for `prefs.getString('token')`, `prefs.setString('password', ...)`
+- [ ] **TLS `badCertificateCallback` fully removed** — grep the entire `lib/` directory for `badCertificateCallback`
+- [ ] **iOS entitlements updated if needed** — `flutter_secure_storage` requires Keychain Sharing capability on iOS
+
 ### Step 3: Clean the patch
 - Remove any debugging `console.log` or `print` statements added during patching
 - Extract reusable security logic into middleware or utility functions if it appears in more than one place

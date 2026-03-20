@@ -120,3 +120,73 @@ def test_vuln_type_exploit(client, attacker_token):
     )
     assert response.status_code == 403  # currently 200 — RED
 ```
+
+### React / Next.js (Vitest + Testing Library)
+```typescript
+// Sensitive storage: token must NOT land in localStorage
+import { render, fireEvent, waitFor } from '@testing-library/react';
+import LoginForm from '../../components/LoginForm';
+
+test('SHOULD NOT store auth token in localStorage', async () => {
+  render(<LoginForm />);
+  fireEvent.submit(screen.getByRole('form'));
+  await waitFor(() => {
+    expect(localStorage.getItem('token')).toBeNull(); // currently set — RED
+  });
+});
+
+// XSS: dangerouslySetInnerHTML must not accept unsanitized input
+test('SHOULD sanitize user content before rendering', () => {
+  const xssPayload = '<script>alert(1)</script>';
+  const { container } = render(<CommentBody content={xssPayload} />);
+  expect(container.innerHTML).not.toContain('<script>'); // currently reflected — RED
+});
+```
+
+### React Native / Expo (Jest)
+```javascript
+// Route param injection: params must be validated before API use
+import { renderRouter, screen } from 'expo-router/testing-library';
+
+test('SHOULD NOT pass raw route params to API query', async () => {
+  const maliciousParam = "1 UNION SELECT * FROM users";
+  // Render the screen with a crafted route param
+  renderRouter({ initialUrl: `/item/${encodeURIComponent(maliciousParam)}` });
+  // Assert the API was NOT called with the raw param
+  expect(mockApiClient.getItem).not.toHaveBeenCalledWith(maliciousParam); // currently called — RED
+});
+
+// Sensitive storage: tokens must use SecureStore, not AsyncStorage
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+test('SHOULD NOT store token in plain AsyncStorage', async () => {
+  await simulateLogin({ username: 'user', password: 'pass' });
+  const stored = await AsyncStorage.getItem('token');
+  expect(stored).toBeNull(); // currently stored in plain AsyncStorage — RED
+});
+```
+
+### Flutter / Dart (flutter_test)
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  // Sensitive storage: token must NOT be in unencrypted SharedPreferences
+  test('SHOULD NOT store auth token in SharedPreferences', () async {
+    SharedPreferences.setMockInitialValues({});
+    await simulateLogin(username: 'user', password: 'password');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('token'), isNull,
+        reason: 'Tokens must not be in unencrypted SharedPreferences — use flutter_secure_storage'); // currently stored — RED
+  });
+
+  // TLS bypass: HTTP client must not disable certificate validation
+  test('SHOULD enforce TLS certificate verification', () {
+    final client = buildHttpClient(); // the app's HTTP client factory
+    // Inspect that no badCertificateCallback bypasses verification
+    expect(client.badCertificateCallback, isNull,
+        reason: 'badCertificateCallback must not be set to bypass TLS'); // currently bypassed — RED
+  });
+}
+```

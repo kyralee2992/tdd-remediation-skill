@@ -9,7 +9,12 @@ Applying Test-Driven Development (TDD) to code that has already been generated r
 
 ## Autonomous Audit Mode
 If the user asks you to "Run the TDD Remediation Auto-Audit" or asks you to implement this on your own:
-1. **Explore**: Proactively use `Glob`, `Grep`, and `Read` to scan the repository. Focus on `controllers/`, `routes/`, `api/`, `middleware/`, and database files. Search for anti-patterns: unparameterized SQL queries, missing ownership checks, unsafe HTML rendering, and command injection sinks. Full search patterns are in [auto-audit.md](./prompts/auto-audit.md).
+1. **Explore**: Proactively use `Glob`, `Grep`, and `Read` to scan the repository. Focus on:
+   - **Backend/API**: `controllers/`, `routes/`, `api/`, `handlers/`, `middleware/`, `services/`, `models/`
+   - **React / Next.js**: `pages/api/`, `app/api/`, `components/`, `hooks/`, `context/`, `store/`
+   - **React Native / Expo**: `screens/`, `navigation/`, `app/`, `app.json`, `app.config.js`
+   - **Flutter / Dart**: `lib/screens/`, `lib/services/`, `lib/api/`, `lib/repositories/`, `pubspec.yaml`
+   Search for anti-patterns: unparameterized SQL queries, missing ownership checks, unsafe HTML rendering, command injection sinks, sensitive data in storage, TLS bypasses, hardcoded secrets. Full search patterns are in [auto-audit.md](./prompts/auto-audit.md).
 2. **Plan**: Present a structured list of vulnerabilities (grouped by severity: CRITICAL / HIGH / MEDIUM / LOW) and get confirmation before making any changes.
 3. **Self-Implement**: For *each* confirmed vulnerability, autonomously execute the complete 3-phase protocol:
    - **[Phase 1 (Red)](./prompts/red-phase.md)**: Write the exploit test ensuring it fails.
