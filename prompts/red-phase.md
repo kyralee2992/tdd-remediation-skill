@@ -99,8 +99,12 @@ const request = require('supertest');
 const app = require('../../app');
 
 describe('[VulnType] - Red Phase', () => {
+  let server;
+  beforeAll(() => { server = app.listen(0); });
+  afterAll(() => server.close());
+
   it('SHOULD block [exploit description]', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/vulnerable-endpoint')
       .send({ input: '<exploit payload>' });
 
