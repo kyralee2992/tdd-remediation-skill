@@ -134,6 +134,86 @@ SharedPreferences.*setString.*token # token in unencrypted SharedPreferences
 Platform\.environment\[            # env access in Flutter — check for secrets
 ```
 
+**SSRF (Server-Side Request Forgery)**
+```
+fetch\(.*req\.(query|body|params)   # fetch with user-controlled URL
+axios\.(get|post)\(.*req\.body      # axios with user-controlled target
+got\(.*req\.(query|params)          # got with user-controlled URL
+```
+
+**Open Redirect**
+```
+res\.redirect\(.*req\.(query|body)  # redirecting to user-supplied URL
+window\.location.*=.*params\.       # client-side redirect from route params
+router\.push\(.*searchParams        # Next.js/RN push with user param
+```
+
+**NoSQL Injection**
+```
+\.find\(\s*req\.(body|query)        # MongoDB find with raw request object
+\.findOne\(\s*req\.(body|query)     # MongoDB findOne with raw request object
+\$where.*:                          # $where operator (executes JS in Mongo)
+```
+
+**Mass Assignment**
+```
+new.*Model\(.*req\.body             # passing full req.body to constructor
+\.create\(.*req\.body               # ORM create with unsanitized body
+\.update.*req\.body                 # ORM update with unsanitized body
+```
+
+**Prototype Pollution**
+```
+_\.merge\(.*req\.(body|query)       # lodash merge with user input
+deepmerge\(.*req\.(body|query)      # deepmerge with user input
+Object\.assign\(\{\}.*req\.body     # Object.assign from user input
+```
+
+**Weak Cryptography**
+```
+createHash\(['"]md5['"]             # MD5 for anything security-related
+createHash\(['"]sha1['"]            # SHA1 for anything security-related
+md5\(.*password                     # MD5-hashed password
+sha1\(.*password                    # SHA1-hashed password
+```
+
+**Missing Security Headers / Rate Limiting**
+```
+app\.(use|listen)                   # check: is helmet() present before routes?
+router\.(post|put|delete)           # mutation routes — check for rateLimit middleware
+app\.post\('/login                  # login route — must have rate limit
+app\.post\('/register               # register route — must have rate limit
+```
+
+**CORS Misconfiguration**
+```
+cors\(\{.*origin.*\*                # wildcard CORS origin
+Access-Control-Allow-Origin.*\*     # wildcard CORS header
+```
+
+**Template Injection**
+```
+res\.render\(.*req\.(params|query)  # user-controlled template name
+ejs\.render\(.*req\.body            # ejs render with user input
+pug\.render\(.*req\.body            # pug render with user input
+```
+
+**Cleartext Traffic / XXE**
+```
+baseURL.*=.*['"]http://(?!localhost) # non-HTTPS API base URL
+noent.*:.*true                      # XML entity expansion enabled
+resolve_entities.*True              # Python lxml entity expansion
+```
+
+**Dependency Audit**
+```
+# Run manually — not grep-based:
+# npm audit --audit-level=high
+# pip-audit
+# govulncheck ./...
+# bundle audit
+```
+
 ### 0c. Present Findings
 Before touching any code, output a structured **Audit Report** with this format:
 

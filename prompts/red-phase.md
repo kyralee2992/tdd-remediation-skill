@@ -166,6 +166,90 @@ test('SHOULD NOT store token in plain AsyncStorage', async () => {
 });
 ```
 
+### SSRF (Server-Side Request Forgery)
+Supply a user-controlled URL pointing to an internal resource (e.g., `http://169.254.169.254/` AWS metadata).
+Assert a 400 or 403 — not a 200 proxying internal content.
+```javascript
+const res = await request(app)
+  .post('/api/fetch-preview')
+  .send({ url: 'http://169.254.169.254/latest/meta-data/' });
+expect(res.status).toBe(400); // currently fetches and returns internal data — RED
+```
+
+### Open Redirect
+Supply a fully external URL as the redirect destination.
+Assert a 400 or that the redirect stays within the same origin.
+```javascript
+const res = await request(app)
+  .get('/auth/callback')
+  .query({ redirect: 'https://evil.com/steal-token' });
+expect(res.status).toBe(400); // currently 302 to attacker site — RED
+// OR assert Location header is relative:
+expect(res.headers.location).not.toMatch(/^https?:\/\//);
+```
+
+### NoSQL Injection
+Supply a MongoDB operator object instead of a plain string value.
+Assert the query is rejected or returns no data.
+```javascript
+const res = await request(app)
+  .post('/api/login')
+  .send({ username: { $gt: '' }, password: { $gt: '' } });
+expect(res.status).toBe(400); // currently returns first user record — RED
+```
+
+### Mass Assignment
+Submit extra fields that should not be user-settable (e.g., `isAdmin`, `role`).
+Assert the privileged field was ignored.
+```javascript
+const res = await request(app)
+  .post('/api/users/register')
+  .send({ username: 'attacker', password: 'pass', isAdmin: true });
+expect(res.status).toBe(201);
+const user = await User.findOne({ username: 'attacker' });
+expect(user.isAdmin).toBe(false); // currently set to true — RED
+```
+
+### Prototype Pollution
+Submit a payload that sets `__proto__` to inject properties into Object.prototype.
+Assert the injected property is not visible on a fresh `{}`.
+```javascript
+const res = await request(app)
+  .post('/api/settings/merge')
+  .send({ '__proto__': { polluted: true } });
+expect(res.status).toBe(200);
+expect({}.polluted).toBeUndefined(); // currently true — RED
+```
+
+### Weak Crypto (Password Hashing)
+Hash a known password and assert the resulting hash is not a raw MD5/SHA1 hex string.
+```javascript
+const bcrypt = require('bcrypt');
+const user = await User.create({ email: 'x@x.com', password: 'mypassword' });
+// An MD5 hash of 'mypassword' is 34819d7beeabb9260a5c854bc85b3e44
+expect(user.passwordHash).not.toBe('34819d7beeabb9260a5c854bc85b3e44');
+// A proper bcrypt hash starts with $2b$
+expect(user.passwordHash).toMatch(/^\$2[aby]\$/); // currently fails — RED
+```
+
+### Missing Rate Limiting
+Send 10 rapid login attempts; assert the 11th is throttled (429).
+```javascript
+for (let i = 0; i < 10; i++) {
+  await request(app).post('/api/auth/login').send({ email: 'x@x.com', password: 'wrong' });
+}
+const res = await request(app).post('/api/auth/login').send({ email: 'x@x.com', password: 'wrong' });
+expect(res.status).toBe(429); // currently 401 — rate limit not enforced — RED
+```
+
+### Missing Security Headers
+Assert a response includes the `X-Content-Type-Options` and `X-Frame-Options` headers set by Helmet.
+```javascript
+const res = await request(app).get('/');
+expect(res.headers['x-content-type-options']).toBe('nosniff'); // currently absent — RED
+expect(res.headers['x-frame-options']).toBeDefined(); // currently absent — RED
+```
+
 ### Flutter / Dart (flutter_test)
 ```dart
 import 'package:flutter_test/flutter_test.dart';

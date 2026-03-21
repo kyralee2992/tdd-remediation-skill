@@ -341,6 +341,277 @@ dependencies:
 
 ---
 
+### SSRF (Server-Side Request Forgery)
+
+**Root cause:** The server makes outbound HTTP requests to a URL supplied by the user without validation.
+
+**Fix:** Validate the URL against an explicit allowlist of allowed hostnames. Never make requests to private/internal IP ranges.
+
+```javascript
+const { URL } = require('url');
+
+const ALLOWED_ORIGINS = new Set(['api.trusted.com', 'cdn.example.com']);
+
+function validateExternalUrl(rawUrl) {
+  let parsed;
+  try { parsed = new URL(rawUrl); } catch { throw new Error('Invalid URL'); }
+  if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Protocol not allowed');
+  if (!ALLOWED_ORIGINS.has(parsed.hostname)) throw new Error('Host not allowed');
+  return parsed.toString();
+}
+
+// In the route handler:
+const safeUrl = validateExternalUrl(req.body.url); // throws on violation
+const response = await fetch(safeUrl);
+```
+
+**Libraries:** No extra library needed; use the built-in `URL` class.
+
+---
+
+### Open Redirect
+
+**Root cause:** The server redirects the user to a URL supplied in a query parameter without validating the destination.
+
+**Fix:** Only allow relative paths or explicitly allowlisted origins.
+
+```javascript
+function safeRedirect(res, destination) {
+  // Allow only relative paths (no scheme, no host)
+  if (/^https?:\/\//i.test(destination)) {
+    return res.status(400).json({ error: 'External redirects not allowed' });
+  }
+  // Prevent protocol-relative URLs (//evil.com)
+  if (destination.startsWith('//')) {
+    return res.status(400).json({ error: 'Invalid redirect destination' });
+  }
+  return res.redirect(destination.startsWith('/') ? destination : `/${destination}`);
+}
+
+// Usage:
+safeRedirect(res, req.query.redirect || '/dashboard');
+```
+
+---
+
+### NoSQL Injection
+
+**Root cause:** A user-supplied value that should be a string is passed directly to MongoDB, allowing operator injection (`{ $gt: '' }`).
+
+**Fix:** Enforce that query values are primitive strings. Reject objects from user input in query fields.
+
+```javascript
+// Middleware: sanitize mongo-operator injection
+function sanitizeBody(req, res, next) {
+  const hasDollar = (obj) =>
+    Object.keys(obj || {}).some(k => k.startsWith('$') || (typeof obj[k] === 'object' && hasDollar(obj[k])));
+  if (hasDollar(req.body) || hasDollar(req.query)) {
+    return res.status(400).json({ error: 'Invalid input' });
+  }
+  next();
+}
+
+app.use(sanitizeBody);
+```
+
+**Library alternative:** `express-mongo-sanitize` strips `$` and `.` from user input automatically.
+```javascript
+const mongoSanitize = require('express-mongo-sanitize');
+app.use(mongoSanitize());
+```
+
+---
+
+### Mass Assignment
+
+**Root cause:** `req.body` is passed directly to an ORM constructor or update method, allowing users to set any field including privileged ones.
+
+**Fix:** Always destructure and explicitly allowlist the fields you accept from the user.
+
+```javascript
+// BEFORE (vulnerable)
+const user = await User.create(req.body);
+
+// AFTER — explicit allowlist
+const { username, email, password } = req.body;
+const user = await User.create({ username, email, password });
+
+// For updates:
+const { displayName, bio } = req.body; // only fields users can change
+await User.updateOne({ _id: req.user.id }, { displayName, bio });
+```
+
+```python
+# FastAPI — use a Pydantic schema with only allowed fields
+class UserCreate(BaseModel):
+    username: str
+    email: EmailStr
+    password: str
+    # isAdmin NOT here — cannot be set by users
+
+@app.post('/users')
+async def create_user(data: UserCreate):
+    user = User(**data.dict())  # safe: Pydantic strips unlisted fields
+```
+
+---
+
+### Prototype Pollution
+
+**Root cause:** A recursive merge function applied to user-supplied input can overwrite `Object.prototype` properties.
+
+**Fix:** Use a null-prototype target for merges, or sanitize `__proto__` / `constructor` keys before merging.
+
+```javascript
+// Option A: sanitize keys before merge (drop __proto__, constructor, prototype)
+function safeMerge(target, source) {
+  const clean = JSON.parse(
+    JSON.stringify(source, (key, val) =>
+      ['__proto__', 'constructor', 'prototype'].includes(key) ? undefined : val
+    )
+  );
+  return Object.assign(target, clean);
+}
+
+// Option B: use Object.create(null) as the target so there is no prototype to pollute
+const settings = safeMerge(Object.create(null), req.body);
+```
+
+**Library:** `lodash` ≥ 4.17.21 has this patched. If using `deepmerge`, pass `{ clone: true }` and pre-sanitize keys.
+
+---
+
+### Weak Cryptography (Password Hashing)
+
+**Root cause:** Passwords are hashed with MD5 or SHA1 — fast algorithms that are trivially brute-forced.
+
+**Fix:** Use `bcrypt` or `argon2`. Never use MD5/SHA1/SHA256 directly for passwords.
+
+```javascript
+// BEFORE (vulnerable)
+const crypto = require('crypto');
+const hash = crypto.createHash('md5').update(password).digest('hex');
+
+// AFTER — bcrypt
+const bcrypt = require('bcrypt');
+const SALT_ROUNDS = 12; // increase over time as hardware improves
+
+// On registration:
+const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
+await User.create({ email, passwordHash });
+
+// On login:
+const valid = await bcrypt.compare(req.body.password, user.passwordHash);
+if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+```
+
+```python
+# AFTER — bcrypt (Python)
+import bcrypt
+
+# Hash on registration:
+hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12))
+
+# Verify on login:
+if not bcrypt.checkpw(password.encode(), stored_hash):
+    raise HTTPException(status_code=401, detail="Invalid credentials")
+```
+
+**Install:** `npm install bcrypt` / `pip install bcrypt`
+
+---
+
+### Missing Rate Limiting
+
+**Root cause:** Authentication and sensitive mutation endpoints have no throttle, enabling brute-force and credential-stuffing attacks.
+
+**Fix:** Apply `express-rate-limit` (Node.js) to auth routes. Use a stricter window on login than on general API routes.
+
+```javascript
+const rateLimit = require('express-rate-limit');
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15 minutes
+  max: 10,                    // 10 attempts per window per IP
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+});
+
+app.use('/api/', apiLimiter);
+app.post('/api/auth/login', loginLimiter, loginHandler);
+app.post('/api/auth/register', loginLimiter, registerHandler);
+```
+
+```python
+# FastAPI — slowapi
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+limiter = Limiter(key_func=get_remote_address)
+
+@app.post('/auth/login')
+@limiter.limit('10/15minutes')
+async def login(request: Request, data: LoginRequest):
+    ...
+```
+
+**Install:** `npm install express-rate-limit` / `pip install slowapi`
+
+---
+
+### Missing Security Headers
+
+**Root cause:** Responses lack HTTP security headers, leaving browsers unprotected against clickjacking, MIME-sniffing, and other attacks.
+
+**Fix:** Install `helmet` as the first middleware. Configure CSP explicitly.
+
+```javascript
+const helmet = require('helmet');
+
+// Minimal (all helmet defaults — good for most apps)
+app.use(helmet());
+
+// With explicit CSP:
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"], // tighten further if possible
+        imgSrc: ["'self'", 'data:', 'https:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+  })
+);
+```
+
+```python
+# FastAPI — secure
+from secure import Secure
+secure_headers = Secure()
+
+@app.middleware('http')
+async def set_secure_headers(request, call_next):
+    response = await call_next(request)
+    secure_headers.framework.fastapi(response)
+    return response
+```
+
+**Install:** `npm install helmet` / `pip install secure`
+
+---
+
 ### TLS Bypass Fix (Node.js + Flutter/Dart)
 
 **Root cause:** TLS certificate verification is explicitly disabled, allowing man-in-the-middle attacks.

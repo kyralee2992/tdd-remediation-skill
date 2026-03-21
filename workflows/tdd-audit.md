@@ -11,6 +11,13 @@ Follow the full Auto-Audit protocol from `auto-audit.md`:
    - Write the exploit test (Red — must fail)
    - Apply the patch (Green — test must pass)
    - Run the full suite (Refactor — no regressions)
-4. **Report** a final Remediation Summary table when all issues are addressed.
+4. **Harden** the codebase proactively after all vulnerabilities are patched:
+   - Security headers (Helmet / CSP)
+   - Rate limiting on auth routes
+   - Dependency vulnerability audit (npm audit / pip-audit / govulncheck)
+   - Secret history scan (gitleaks / trufflehog)
+   - Production error handling (no stack traces)
+   - CSRF protection and secure cookie flags
+5. **Report** a final Remediation Summary table when all issues are addressed.
 
 Do not skip steps. Do not advance to the next vulnerability until the current one is fully proven closed by a passing test.

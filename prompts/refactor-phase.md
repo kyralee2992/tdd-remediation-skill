@@ -32,6 +32,16 @@ Go through this checklist before closing the vulnerability:
 - [ ] **Offline token refresh still works** — `SecureStore.getItemAsync` is called in the right lifecycle (not before `SecureStore.isAvailableAsync()` on web)
 - [ ] **Deep link params validated** — any `route.params` passed to API calls are sanitized or type-checked
 
+**New vulnerability class additions:**
+- [ ] **SSRF allowlist verified** — `validateExternalUrl` throws on internal IPs and non-allowlisted hosts; confirm `169.254.x.x` and `10.x.x.x` are blocked
+- [ ] **Open redirect uses relative-only check** — `/^https?:\/\//` and `//` prefix both rejected; confirm legitimate in-app redirects still work
+- [ ] **NoSQL injection sanitized** — `express-mongo-sanitize` or equivalent applied globally; confirm `{ $gt: '' }` payloads return 400
+- [ ] **Mass assignment uses field allowlist** — no `req.body` passed directly to ORM; confirm privileged fields (`isAdmin`, `role`) cannot be set by user
+- [ ] **Prototype pollution sanitizes keys** — `__proto__`, `constructor`, `prototype` keys stripped before any merge; confirm `{}.polluted` is still `undefined` after merge
+- [ ] **Passwords use bcrypt/argon2** — no `createHash('md5')` or `createHash('sha1')` for passwords; `bcrypt.compare` used on login
+- [ ] **Rate limiting active on auth routes** — `/login` and `/register` return 429 after threshold; general API routes have a broader limit
+- [ ] **Helmet applied before all routes** — `X-Content-Type-Options: nosniff` and `X-Frame-Options` present in response; CSP header present
+
 **Flutter additions:**
 - [ ] **`flutter_secure_storage` in `pubspec.yaml`** — dependency present and `flutter pub get` ran
 - [ ] **No remaining `SharedPreferences` calls for sensitive keys** — grep for `prefs.getString('token')`, `prefs.setString('password', ...)`

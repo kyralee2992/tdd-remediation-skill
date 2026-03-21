@@ -102,6 +102,23 @@ const VULN_PATTERNS = [
   { name: 'Insecure Random',   severity: 'HIGH',     pattern: /(?:token|sessionId|nonce|secret|csrf)\w*\s*=.*Math\.random\(\)|Math\.random\(\).*(?:token|session|nonce|secret)/i },
   { name: 'Sensitive Log',     severity: 'MEDIUM',   skipInTests: true,  pattern: /console\.(log|info|debug)\([^)]*(?:token|password|secret|jwt|authorization|apiKey|api_key)/i },
   { name: 'Secret Fallback',   severity: 'HIGH',     pattern: /process\.env\.\w+\s*\|\|\s*['"][A-Za-z0-9+/=_\-]{10,}['"]/i },
+  // SSRF, redirects, injection
+  { name: 'SSRF',                    severity: 'CRITICAL', pattern: /\b(?:fetch|axios\.(?:get|post|put|patch|delete|request)|got|https?\.get)\s*\(\s*req\.(?:query|body|params)\./i },
+  { name: 'Open Redirect',           severity: 'HIGH',     pattern: /res\.redirect\s*\(\s*req\.(?:query|body|params)\.|window\.location(?:\.href)?\s*=\s*(?:params\.|route\.params\.|searchParams\.get)/i },
+  { name: 'NoSQL Injection',         severity: 'HIGH',     pattern: /\.(?:find|findOne|findById|updateOne|deleteOne)\s*\(\s*req\.(?:body|query|params)\b|\$where\s*:\s*['"`]/i },
+  { name: 'Template Injection',      severity: 'HIGH',     pattern: /res\.render\s*\(\s*req\.(?:params|body|query)\.|(?:ejs|pug|nunjucks|handlebars)\.render(?:File)?\s*\([^)]*req\.(?:body|params|query)/i },
+  { name: 'Insecure Deserialization',severity: 'CRITICAL', pattern: /\.unserialize\s*\(.*req\.|__proto__\s*[=:][^=]|Object\.setPrototypeOf\s*\([^,]+,\s*req\./i },
+  // Assignment / pollution
+  { name: 'Mass Assignment',         severity: 'HIGH',     pattern: /new\s+\w+\s*\(\s*req\.body\b|\.create\s*\(\s*req\.body\b|\.update(?:One)?\s*\(\s*\{[^}]*\},\s*req\.body\b/i },
+  { name: 'Prototype Pollution',     severity: 'HIGH',     pattern: /(?:_\.merge|lodash\.merge|deepmerge|hoek\.merge)\s*\([^)]*req\.(?:body|query|params)/i },
+  // Crypto / config
+  { name: 'Weak Crypto',             severity: 'HIGH',     pattern: /createHash\s*\(\s*['"](?:md5|sha1)['"]\)|(?:md5|sha1)\s*\(\s*(?:password|passwd|pwd|secret)/i },
+  { name: 'CORS Wildcard',           severity: 'MEDIUM',   pattern: /cors\s*\(\s*\{\s*origin\s*:\s*['"]?\*['"]?|'Access-Control-Allow-Origin',\s*['"]?\*/i },
+  { name: 'Cleartext Traffic',       severity: 'MEDIUM',   skipInTests: true, pattern: /(?:baseURL|apiUrl|API_URL|endpoint|baseUrl)\s*[:=]\s*['"]http:\/\/(?!localhost|127\.0\.0\.1)/i },
+  { name: 'XXE',                     severity: 'HIGH',     pattern: /noent\s*:\s*true|expand_entities\s*=\s*True|resolve_entities\s*=\s*True/i },
+  // Mobile / WebView
+  { name: 'WebView JS Bridge',       severity: 'HIGH',     pattern: /addJavascriptInterface\s*\(|javaScriptEnabled\s*:\s*true|allowFileAccess\s*:\s*true|allowUniversalAccessFromFileURLs\s*:\s*true/i },
+  { name: 'Deep Link Injection',     severity: 'MEDIUM',   pattern: /Linking\.getInitialURL\s*\(\)|Linking\.addEventListener\s*\(\s*['"]url['"]/i },
 ];
 
 const SCAN_EXTENSIONS = new Set(['.js', '.ts', '.jsx', '.tsx', '.mjs', '.py', '.go', '.dart']);
@@ -151,6 +168,28 @@ function scanAppConfig() {
   return findings;
 }
 
+function scanAndroidManifest() {
+  const findings = [];
+  const manifestPath = path.join(projectDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
+  if (!fs.existsSync(manifestPath)) return findings;
+  let lines;
+  try { lines = fs.readFileSync(manifestPath, 'utf8').split('\n'); } catch { return findings; }
+  for (let i = 0; i < lines.length; i++) {
+    if (/android:debuggable\s*=\s*["']true["']/i.test(lines[i])) {
+      findings.push({
+        severity: 'HIGH',
+        name: 'Android Debuggable',
+        file: 'android/app/src/main/AndroidManifest.xml',
+        line: i + 1,
+        snippet: lines[i].trim().slice(0, 80),
+        inTestFile: false,
+        likelyFalsePositive: false,
+      });
+    }
+  }
+  return findings;
+}
+
 function quickScan() {
   const findings = [];
   for (const filePath of walkFiles(projectDir)) {
@@ -174,7 +213,7 @@ function quickScan() {
       }
     }
   }
-  return [...findings, ...scanAppConfig()];
+  return [...findings, ...scanAppConfig(), ...scanAndroidManifest()];
 }
 
 function printFindings(findings) {
