@@ -4,6 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
+const {
+  detectFramework,
+  detectAppFramework,
+  detectTestBaseDir,
+  quickScan,
+  printFindings,
+} = require('./lib/scanner');
+
 const args = process.argv.slice(2);
 const isLocal = args.includes('--local');
 const isClaude = args.includes('--claude');
@@ -20,245 +28,22 @@ const targetWorkflowDir = isClaude
   ? path.join(agentBaseDir, agentDirName, 'commands')
   : path.join(agentBaseDir, agentDirName, 'workflows');
 
-// ─── 1. Framework Detection ──────────────────────────────────────────────────
-
-function detectFramework() {
-  // Flutter / Dart — check before package.json since a Flutter project may have both
-  if (fs.existsSync(path.join(projectDir, 'pubspec.yaml'))) return 'flutter';
-
-  const pkgPath = path.join(projectDir, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-      if (deps.vitest) return 'vitest';
-      if (deps.jest || deps.supertest) return 'jest';
-      if (deps.mocha) return 'mocha';
-    } catch {}
-  }
-  if (
-    fs.existsSync(path.join(projectDir, 'pytest.ini')) ||
-    fs.existsSync(path.join(projectDir, 'pyproject.toml')) ||
-    fs.existsSync(path.join(projectDir, 'setup.py')) ||
-    fs.existsSync(path.join(projectDir, 'requirements.txt'))
-  ) return 'pytest';
-  if (fs.existsSync(path.join(projectDir, 'go.mod'))) return 'go';
-  return 'jest';
-}
-
-// Detect the UI framework for richer scan context (React, Next.js, RN, Expo, Flutter)
-function detectAppFramework() {
-  if (fs.existsSync(path.join(projectDir, 'pubspec.yaml'))) return 'flutter';
-  const pkgPath = path.join(projectDir, 'package.json');
-  if (fs.existsSync(pkgPath)) {
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-      const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-      if (deps.expo) return 'expo';
-      if (deps['react-native']) return 'react-native';
-      if (deps.next) return 'nextjs';
-      if (deps.react) return 'react';
-    } catch {}
-  }
-  return null;
-}
-
-const appFramework = detectAppFramework();
-
-const framework = detectFramework();
-
-// ─── 2. Test Directory Detection ─────────────────────────────────────────────
-
-function detectTestBaseDir() {
-  // Respect an existing convention before inventing one
-  const candidates = ['__tests__', 'tests', 'test', 'spec'];
-  for (const dir of candidates) {
-    if (fs.existsSync(path.join(projectDir, dir))) return dir;
-  }
-  // Framework-informed defaults when no directory exists yet
-  if (framework === 'pytest') return 'tests';
-  if (framework === 'go') return 'test';
-  return '__tests__';
-}
-
-const testBaseDir = detectTestBaseDir();
+const appFramework = detectAppFramework(projectDir);
+const framework = detectFramework(projectDir);
+const testBaseDir = detectTestBaseDir(projectDir, framework);
 const targetTestDir = path.join(projectDir, testBaseDir, 'security');
 
-// ─── 3. Quick Scan ───────────────────────────────────────────────────────────
-
-const VULN_PATTERNS = [
-  { name: 'SQL Injection',     severity: 'CRITICAL', pattern: /(`SELECT[^`]*\$\{|"SELECT[^"]*"\s*\+|execute\(f"|cursor\.execute\(.*%s|\.query\(`[^`]*\$\{)/i },
-  { name: 'Command Injection', severity: 'CRITICAL', pattern: /\bexec(Sync)?\s*\(.*req\.(params|body|query)|subprocess\.(run|Popen|call)\([^)]*shell\s*=\s*True/i },
-  { name: 'IDOR',              severity: 'HIGH',     pattern: /findById\s*\(\s*req\.(params|body|query)\.|findOne\s*\(\s*\{[^}]*id\s*:\s*req\.(params|body|query)/i },
-  { name: 'XSS',               severity: 'HIGH',     pattern: /[^/]innerHTML\s*=(?!=)|dangerouslySetInnerHTML\s*=\s*\{\{|document\.write\s*\(|res\.send\s*\(`[^`]*\$\{req\./i },
-  { name: 'Path Traversal',    severity: 'HIGH',     pattern: /(readFile|sendFile|createReadStream|open)\s*\(.*req\.(params|body|query)|path\.join\s*\([^)]*req\.(params|body|query)/i },
-  { name: 'Broken Auth',       severity: 'HIGH',     pattern: /jwt\.decode\s*\((?![^;]*\.verify)|verify\s*:\s*false|secret\s*=\s*['"][a-z0-9]{1,20}['"]/i },
-  // Vibecoding / mobile stacks
-  { name: 'Sensitive Storage', severity: 'HIGH',     pattern: /(localStorage|AsyncStorage)\.setItem\s*\(\s*['"](token|password|secret|auth|jwt|api.?key)['"]/i },
-  { name: 'TLS Bypass',        severity: 'CRITICAL', pattern: /badCertificateCallback[^;]*=\s*true|rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['"]?0/i },
-  { name: 'Hardcoded Secret',  severity: 'CRITICAL', skipInTests: true,  pattern: /(?:const|final|var|let|static)\s+(?:API_KEY|PRIVATE_KEY|SECRET_KEY|ACCESS_TOKEN|CLIENT_SECRET)\s*=\s*['"][A-Za-z0-9+/=_\-]{20,}['"]/i },
-  { name: 'eval() Injection',  severity: 'HIGH',     pattern: /\beval\s*\([^)]*(?:route\.params|searchParams\.get|req\.(query|body)|params\[)/i },
-  // Common vibecoding anti-patterns
-  { name: 'Insecure Random',   severity: 'HIGH',     pattern: /(?:token|sessionId|nonce|secret|csrf)\w*\s*=.*Math\.random\(\)|Math\.random\(\).*(?:token|session|nonce|secret)/i },
-  { name: 'Sensitive Log',     severity: 'MEDIUM',   skipInTests: true,  pattern: /console\.(log|info|debug)\([^)]*(?:token|password|secret|jwt|authorization|apiKey|api_key)/i },
-  { name: 'Secret Fallback',   severity: 'HIGH',     pattern: /process\.env\.\w+\s*\|\|\s*['"][A-Za-z0-9+/=_\-]{10,}['"]/i },
-  // SSRF, redirects, injection
-  { name: 'SSRF',                    severity: 'CRITICAL', pattern: /\b(?:fetch|axios\.(?:get|post|put|patch|delete|request)|got|https?\.get)\s*\(\s*req\.(?:query|body|params)\./i },
-  { name: 'Open Redirect',           severity: 'HIGH',     pattern: /res\.redirect\s*\(\s*req\.(?:query|body|params)\.|window\.location(?:\.href)?\s*=\s*(?:params\.|route\.params\.|searchParams\.get)/i },
-  { name: 'NoSQL Injection',         severity: 'HIGH',     pattern: /\.(?:find|findOne|findById|updateOne|deleteOne)\s*\(\s*req\.(?:body|query|params)\b|\$where\s*:\s*['"`]/i },
-  { name: 'Template Injection',      severity: 'HIGH',     pattern: /res\.render\s*\(\s*req\.(?:params|body|query)\.|(?:ejs|pug|nunjucks|handlebars)\.render(?:File)?\s*\([^)]*req\.(?:body|params|query)/i },
-  { name: 'Insecure Deserialization',severity: 'CRITICAL', pattern: /\.unserialize\s*\(.*req\.|__proto__\s*[=:][^=]|Object\.setPrototypeOf\s*\([^,]+,\s*req\./i },
-  // Assignment / pollution
-  { name: 'Mass Assignment',         severity: 'HIGH',     pattern: /new\s+\w+\s*\(\s*req\.body\b|\.create\s*\(\s*req\.body\b|\.update(?:One)?\s*\(\s*\{[^}]*\},\s*req\.body\b/i },
-  { name: 'Prototype Pollution',     severity: 'HIGH',     pattern: /(?:_\.merge|lodash\.merge|deepmerge|hoek\.merge)\s*\([^)]*req\.(?:body|query|params)/i },
-  // Crypto / config
-  { name: 'Weak Crypto',             severity: 'HIGH',     pattern: /createHash\s*\(\s*['"](?:md5|sha1)['"]\)|(?:md5|sha1)\s*\(\s*(?:password|passwd|pwd|secret)/i },
-  { name: 'CORS Wildcard',           severity: 'MEDIUM',   pattern: /cors\s*\(\s*\{\s*origin\s*:\s*['"]?\*['"]?|'Access-Control-Allow-Origin',\s*['"]?\*/i },
-  { name: 'Cleartext Traffic',       severity: 'MEDIUM',   skipInTests: true, pattern: /(?:baseURL|apiUrl|API_URL|endpoint|baseUrl)\s*[:=]\s*['"]http:\/\/(?!localhost|127\.0\.0\.1)/i },
-  { name: 'XXE',                     severity: 'HIGH',     pattern: /noent\s*:\s*true|expand_entities\s*=\s*True|resolve_entities\s*=\s*True/i },
-  // Mobile / WebView
-  { name: 'WebView JS Bridge',       severity: 'HIGH',     pattern: /addJavascriptInterface\s*\(|javaScriptEnabled\s*:\s*true|allowFileAccess\s*:\s*true|allowUniversalAccessFromFileURLs\s*:\s*true/i },
-  { name: 'Deep Link Injection',     severity: 'MEDIUM',   pattern: /Linking\.getInitialURL\s*\(\)|Linking\.addEventListener\s*\(\s*['"]url['"]/i },
-];
-
-const SCAN_EXTENSIONS = new Set(['.js', '.ts', '.jsx', '.tsx', '.mjs', '.py', '.go', '.dart']);
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', '.next', 'out', '__pycache__', 'venv', '.venv', 'vendor', '.expo', '.dart_tool', '.pub-cache']);
-
-function* walkFiles(dir) {
-  let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
-    const fullPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) yield* walkFiles(fullPath);
-    else if (SCAN_EXTENSIONS.has(path.extname(entry.name))) yield fullPath;
-  }
-}
-
-// Returns true for test/spec files — used to down-weight false-positive-prone patterns
-function isTestFile(filePath) {
-  const rel = path.relative(projectDir, filePath).replace(/\\/g, '/');
-  return /[._-]test\.[a-z]+$|[._-]spec\.[a-z]+$|_test\.dart$|\/tests?\/|\/spec\/|\/test_/.test(rel);
-}
-
-// Scan app.json / app.config.* for embedded secrets (common Expo vibecoding issue)
-function scanAppConfig() {
-  const findings = [];
-  const configCandidates = ['app.json', 'app.config.js', 'app.config.ts'];
-  const secretPattern = /['"]?(?:apiKey|api_key|secret|privateKey|accessToken|clientSecret)['"]?\s*[:=]\s*['"][A-Za-z0-9+/=_\-]{20,}['"]/i;
-
-  for (const name of configCandidates) {
-    const filePath = path.join(projectDir, name);
-    if (!fs.existsSync(filePath)) continue;
-    let lines;
-    try { lines = fs.readFileSync(filePath, 'utf8').split('\n'); } catch { continue; }
-    for (let i = 0; i < lines.length; i++) {
-      if (secretPattern.test(lines[i])) {
-        findings.push({
-          severity: 'CRITICAL',
-          name: 'Config Secret',
-          file: name,
-          line: i + 1,
-          snippet: lines[i].trim().slice(0, 80),
-          inTestFile: false,
-        });
-      }
-    }
-  }
-  return findings;
-}
-
-function scanAndroidManifest() {
-  const findings = [];
-  const manifestPath = path.join(projectDir, 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
-  if (!fs.existsSync(manifestPath)) return findings;
-  let lines;
-  try { lines = fs.readFileSync(manifestPath, 'utf8').split('\n'); } catch { return findings; }
-  for (let i = 0; i < lines.length; i++) {
-    if (/android:debuggable\s*=\s*["']true["']/i.test(lines[i])) {
-      findings.push({
-        severity: 'HIGH',
-        name: 'Android Debuggable',
-        file: 'android/app/src/main/AndroidManifest.xml',
-        line: i + 1,
-        snippet: lines[i].trim().slice(0, 80),
-        inTestFile: false,
-        likelyFalsePositive: false,
-      });
-    }
-  }
-  return findings;
-}
-
-function quickScan() {
-  const findings = [];
-  for (const filePath of walkFiles(projectDir)) {
-    const inTest = isTestFile(filePath);
-    let lines;
-    try { lines = fs.readFileSync(filePath, 'utf8').split('\n'); } catch { continue; }
-    for (let i = 0; i < lines.length; i++) {
-      for (const vuln of VULN_PATTERNS) {
-        if (vuln.pattern.test(lines[i])) {
-          findings.push({
-            severity: vuln.severity,
-            name: vuln.name,
-            file: path.relative(projectDir, filePath),
-            line: i + 1,
-            snippet: lines[i].trim().slice(0, 80),
-            inTestFile: inTest,
-            likelyFalsePositive: inTest && !!vuln.skipInTests,
-          });
-          break; // one finding per line
-        }
-      }
-    }
-  }
-  return [...findings, ...scanAppConfig(), ...scanAndroidManifest()];
-}
-
-function printFindings(findings) {
-  if (findings.length === 0) {
-    console.log('   ✅ No obvious vulnerability patterns detected.\n');
-    return;
-  }
-  const real = findings.filter(f => !f.likelyFalsePositive);
-  const noisy = findings.filter(f => f.likelyFalsePositive);
-
-  const bySeverity = { CRITICAL: [], HIGH: [], MEDIUM: [], LOW: [] };
-  for (const f of real) (bySeverity[f.severity] || bySeverity.LOW).push(f);
-  const icons = { CRITICAL: '🔴', HIGH: '🟠', MEDIUM: '🟡', LOW: '🔵' };
-
-  console.log(`\n   Found ${real.length} potential issue(s)${noisy.length ? ` (+${noisy.length} in test files — see below)` : ''}:\n`);
-  for (const [sev, list] of Object.entries(bySeverity)) {
-    if (!list.length) continue;
-    for (const f of list) {
-      const testBadge = f.inTestFile ? ' [test file]' : '';
-      console.log(`   ${icons[sev]} [${sev}] ${f.name} — ${f.file}:${f.line}${testBadge}`);
-      console.log(`         ${f.snippet}`);
-    }
-  }
-
-  if (noisy.length) {
-    console.log('\n   ⚪ Likely intentional (in test files — verify manually):');
-    for (const f of noisy) {
-      console.log(`      ${f.name} — ${f.file}:${f.line}`);
-    }
-  }
-
-  console.log('\n   Run /tdd-audit in your agent to remediate.\n');
-}
-
-// ─── 4. Scan-only early exit ──────────────────────────────────────────────────
+// ─── Scan-only early exit ─────────────────────────────────────────────────────
 
 if (scanOnly) {
   process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
-  const findings = quickScan();
+  const findings = quickScan(projectDir);
   process.stdout.write('\n');
   printFindings(findings);
   process.exit(0);
 }
 
-// ─── 5. Install Skill Files ───────────────────────────────────────────────────
+// ─── Install Skill Files ──────────────────────────────────────────────────────
 
 const appLabel = appFramework ? `, app: ${appFramework}` : '';
 console.log(`\nInstalling TDD Remediation Skill (${isLocal ? 'local' : 'global'}, framework: ${framework}${appLabel}, test dir: ${testBaseDir}/)...\n`);
@@ -271,7 +56,7 @@ for (const item of ['SKILL.md', 'prompts', 'templates']) {
   if (fs.existsSync(src)) fs.cpSync(src, dest, { recursive: true });
 }
 
-// ─── 5. Scaffold Security Test Boilerplate ────────────────────────────────────
+// ─── Scaffold Security Test Boilerplate ───────────────────────────────────────
 
 if (!fs.existsSync(targetTestDir)) {
   fs.mkdirSync(targetTestDir, { recursive: true });
@@ -296,7 +81,7 @@ if (!fs.existsSync(destTest) && fs.existsSync(srcTest)) {
   console.log(`✅ Scaffolded ${path.relative(projectDir, destTest)}`);
 }
 
-// ─── 6. Install Workflow Shortcode ────────────────────────────────────────────
+// ─── Install Workflow Shortcode ───────────────────────────────────────────────
 
 if (!fs.existsSync(targetWorkflowDir)) fs.mkdirSync(targetWorkflowDir, { recursive: true });
 const srcWorkflow = path.join(__dirname, 'workflows', 'tdd-audit.md');
@@ -306,7 +91,7 @@ if (fs.existsSync(srcWorkflow)) {
   console.log(`✅ Installed /tdd-audit workflow shortcode`);
 }
 
-// ─── 7. Inject test:security into package.json ────────────────────────────────
+// ─── Inject test:security into package.json ───────────────────────────────────
 
 const pkgPath = path.join(projectDir, 'package.json');
 if (framework !== 'pytest' && framework !== 'go' && fs.existsSync(pkgPath)) {
@@ -316,10 +101,10 @@ if (framework !== 'pytest' && framework !== 'go' && fs.existsSync(pkgPath)) {
       pkg.scripts = pkg.scripts || {};
       const secDir = `${testBaseDir}/security`;
       pkg.scripts['test:security'] = {
-        jest:   `jest --testPathPattern=${secDir} --forceExit`,
+        jest:   `jest --testPathPatterns=${secDir} --forceExit`,
         vitest: `vitest run ${secDir}`,
         mocha:  `mocha '${secDir}/**/*.spec.js'`,
-      }[framework] || `jest --testPathPattern=${secDir} --forceExit`;
+      }[framework] || `jest --testPathPatterns=${secDir} --forceExit`;
       fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
       console.log(`✅ Added "test:security" script to package.json`);
     } else {
@@ -330,31 +115,43 @@ if (framework !== 'pytest' && framework !== 'go' && fs.existsSync(pkgPath)) {
   }
 }
 
-// ─── 8. Scaffold CI Workflow ─────────────────────────────────────────────────
+// ─── Scaffold CI Workflows ────────────────────────────────────────────────────
 
 const ciWorkflowDir = path.join(projectDir, '.github', 'workflows');
-const ciWorkflowPath = path.join(ciWorkflowDir, 'security-tests.yml');
+fs.mkdirSync(ciWorkflowDir, { recursive: true });
 
-if (!fs.existsSync(ciWorkflowPath)) {
-  const ciTemplateMap = {
-    jest:    'security-tests.node.yml',
-    vitest:  'security-tests.node.yml',
-    mocha:   'security-tests.node.yml',
-    pytest:  'security-tests.python.yml',
-    go:      'security-tests.go.yml',
-    flutter: 'security-tests.flutter.yml',
-  };
-  const ciTemplatePath = path.join(__dirname, 'templates', 'workflows', ciTemplateMap[framework]);
-  if (fs.existsSync(ciTemplatePath)) {
-    fs.mkdirSync(ciWorkflowDir, { recursive: true });
-    fs.copyFileSync(ciTemplatePath, ciWorkflowPath);
-    console.log(`✅ Scaffolded .github/workflows/security-tests.yml`);
+const ciWorkflows = [
+  {
+    destName: 'security-tests.yml',
+    templateMap: {
+      jest: 'security-tests.node.yml', vitest: 'security-tests.node.yml',
+      mocha: 'security-tests.node.yml', pytest: 'security-tests.python.yml',
+      go: 'security-tests.go.yml', flutter: 'security-tests.flutter.yml',
+    },
+  },
+  {
+    destName: 'ci.yml',
+    templateMap: {
+      jest: 'ci.node.yml', vitest: 'ci.node.yml', mocha: 'ci.node.yml',
+      pytest: 'ci.python.yml', go: 'ci.go.yml', flutter: 'ci.flutter.yml',
+    },
+  },
+];
+
+for (const { destName, templateMap } of ciWorkflows) {
+  const destPath = path.join(ciWorkflowDir, destName);
+  if (!fs.existsSync(destPath)) {
+    const srcPath = path.join(__dirname, 'templates', 'workflows', templateMap[framework]);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
+      console.log(`✅ Scaffolded .github/workflows/${destName}`);
+    }
+  } else {
+    console.log(`   .github/workflows/${destName} already exists — skipped`);
   }
-} else {
-  console.log(`   .github/workflows/security-tests.yml already exists — skipped`);
 }
 
-// ─── 9. Pre-commit Hook (opt-in) ─────────────────────────────────────────────
+// ─── Pre-commit Hook (opt-in) ─────────────────────────────────────────────────
 
 if (withHooks) {
   const gitDir = path.join(projectDir, '.git');
@@ -392,11 +189,11 @@ if (withHooks) {
   }
 }
 
-// ─── 10. Quick Scan ──────────────────────────────────────────────────────────
+// ─── Quick Scan ───────────────────────────────────────────────────────────────
 
 if (!skipScan) {
   process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
-  const findings = quickScan();
+  const findings = quickScan(projectDir);
   process.stdout.write('\n');
   printFindings(findings);
 }

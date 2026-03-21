@@ -16,8 +16,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node index.js --local --skip-scan && echo 'Smoke test passed'",
-    "test:security": "jest --testPathPattern=__tests__/security --forceExit"
+    "test": "jest --forceExit",
+    "test:unit": "jest --testPathPatterns=__tests__/unit --forceExit --coverage",
+    "test:security": "jest --testPathPatterns=__tests__/security --forceExit",
+    "test:smoke": "node index.js --local --skip-scan && echo 'Smoke test passed'"
   },
   "keywords": [
     "security",
@@ -44,5 +46,8 @@
     "node": ">=16.7.0"
   },
   "author": "Kyra Lee",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^30.3.0"
+  }
 }
