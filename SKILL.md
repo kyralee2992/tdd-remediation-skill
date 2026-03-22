@@ -1,6 +1,13 @@
 ---
 name: TDD Remediation Protocol
 description: A comprehensive toolkit for applying Red-Green-Refactor to fix security vulnerabilities.
+category: security
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
 ---
 
 # TDD Remediation Protocol

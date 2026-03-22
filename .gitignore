@@ -1,6 +1,4 @@
 node_modules/
 .agents/
 .claude/
-.github/
-__tests__/
 .DS_Store

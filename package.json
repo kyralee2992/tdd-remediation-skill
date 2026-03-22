@@ -1,7 +1,7 @@
 {
   "name": "@lhi/tdd-audit",
-  "version": "1.4.1",
-  "description": "Anti-Gravity Skill for TDD Remediation. Patches security vulnerabilities using a Red-Green-Refactor protocol with automated exploit tests.",
+  "version": "1.5.0",
+  "description": "Security skill installer for Claude Code, Gemini CLI, Cursor, Codex, and OpenCode. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol.",
   "main": "index.js",
   "bin": {
     "tdd-audit": "index.js"

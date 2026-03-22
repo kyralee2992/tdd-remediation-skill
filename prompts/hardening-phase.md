@@ -1,3 +1,14 @@
+---
+name: hardening-phase
+description: "Hardening Phase: add security headers, rate limiting, secret scanning, SHA-pinned Actions, and agentic AI controls after all vulnerabilities are patched."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: Proactive Hardening (Phase 4)
 
 Once all known vulnerabilities are remediated, Phase 4 goes beyond patching holes to building layers of defense that make future vulnerabilities harder to introduce and easier to catch.
@@ -227,7 +238,85 @@ For any third-party scripts or stylesheets loaded via CDN, add integrity hashes 
 
 ---
 
-## 4i. Hardening Verification Checklist
+## 4i. GitHub Actions Supply Chain Hardening
+
+Unpinned GitHub Actions are a supply chain vector — a compromised tag or branch can exfiltrate your `NPM_TOKEN`, `AWS_ACCESS_KEY_ID`, or other secrets.
+
+**Grep for unpinned actions:**
+```bash
+grep -rn "uses:.*@v\|uses:.*@main\|uses:.*@master" .github/workflows/
+```
+
+**Pin every `uses:` to a full commit SHA:**
+```yaml
+# Before (vulnerable)
+- uses: actions/checkout@v4
+- uses: actions/setup-node@v4
+
+# After (safe — SHA locked, tag as comment)
+- uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+- uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+```
+
+**Also audit workflow inputs for injection (ASI08):**
+```yaml
+# Vulnerable — direct interpolation into run step
+run: echo "${{ github.event.pull_request.title }}"
+
+# Safe — use env var to break interpolation chain
+env:
+  PR_TITLE: ${{ github.event.pull_request.title }}
+run: echo "$PR_TITLE"
+```
+
+**Secrets in workflows** — never inline secrets into `run:` commands:
+```yaml
+# Vulnerable — secret in URL leaks to logs
+run: curl https://api.example.com?key=${{ secrets.API_KEY }}
+
+# Safe — pass via env var
+env:
+  API_KEY: ${{ secrets.API_KEY }}
+run: curl -H "Authorization: $API_KEY" https://api.example.com
+```
+
+---
+
+## 4j. Agentic AI Security Hardening
+
+If this project contains AI agent code, MCP configurations, or CLAUDE.md files, apply these additional controls:
+
+**CLAUDE.md / Instructions file hygiene:**
+- Ensure `CLAUDE.md` is under version control and reviewed on every commit
+- Never include any user-supplied content in `CLAUDE.md`
+- Scope `CLAUDE.md` permissions to the minimum needed for the project
+
+**MCP server pinning:**
+```json
+// settings.json — pin to exact version, prefer local install over npx
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "node",
+      "args": ["/usr/local/lib/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js"]
+    }
+  }
+}
+```
+
+**Tool permission scope:**
+- Never grant `bash` tool access when only `read` is needed
+- Review `allowedTools` lists and remove any tool not required for the task
+- For automated CI agents, use a dedicated low-privilege service account
+
+**Prompt injection defense:**
+- Sanitize all tool outputs before injecting into prompt context
+- Treat content from web fetches, file reads, and search results as untrusted
+- Never have the agent execute commands derived directly from tool output content
+
+---
+
+## 4k. Hardening Verification Checklist
 
 After Phase 4, confirm all of the following:
 
@@ -241,3 +330,9 @@ After Phase 4, confirm all of the following:
 - [ ] SRI hashes on all third-party CDN resources
 - [ ] `*.env` files in `.gitignore`; no `.env` committed to git
 - [ ] All cookies use `httpOnly: true`, `secure: true`, `sameSite: 'strict'` or `'lax'`
+- [ ] All GitHub Actions `uses:` pinned to full commit SHAs
+- [ ] No `github.event.*` interpolated directly into `run:` steps
+- [ ] No secrets inline in workflow `run:` commands or URLs
+- [ ] `CLAUDE.md` in version control and reviewed; no user-supplied content
+- [ ] MCP servers pinned to exact versions or local installs
+- [ ] Agent tool permissions scoped to minimum required

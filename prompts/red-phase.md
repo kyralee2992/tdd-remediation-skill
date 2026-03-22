@@ -1,3 +1,14 @@
+---
+name: red-phase
+description: "Red Phase: write a failing exploit test that proves the vulnerability exists before touching any code."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: The Exploit (Red Phase)
 
 Before changing a single line of the vulnerable code, you must write a test that successfully executes the exploit. If the test cannot break the app, the vulnerability isn't properly isolated.

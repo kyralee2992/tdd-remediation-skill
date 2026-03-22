@@ -1,3 +1,14 @@
+---
+name: auto-audit
+description: "Auto-Audit mode: discover, report, and remediate vulnerabilities using Red-Green-Refactor."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: Auto-Audit Mode
 
 When invoked in Auto-Audit mode, proactively secure the user's entire repository without waiting for explicit files to be provided.
@@ -260,4 +271,125 @@ After all vulnerabilities are addressed, output a final **Remediation Summary**:
 | SQLi | src/routes/users.js:34 | ✅ Fixed | __tests__/security/sqli-users.test.js |
 | IDOR | src/controllers/docs.js:87 | ✅ Fixed | __tests__/security/idor-docs.test.js |
 | XSS  | src/api/comments.js:52  | ✅ Fixed | __tests__/security/xss-comments.test.js |
+```
+
+---
+
+## Agentic AI Security (ASI01–ASI10)
+
+When the project contains AI agent code, MCP configurations, CLAUDE.md files, or tool-calling patterns, also scan for agentic-specific vulnerabilities. These can be harder to spot than traditional web vulns but carry severe consequences (data exfiltration via tool abuse, agent hijacking, supply chain via MCP).
+
+### ASI01 — Prompt Injection via Tool Output
+**What**: Malicious text in tool results (web scrapes, file reads, search results) that instructs the agent to perform unauthorized actions.
+**Grep for**:
+```
+fetch\(.*then.*res\.text         # agent reading raw web content into prompt
+readFile.*utf8.*then             # file content fed directly to model
+tool_result.*content             # MCP tool output injected into context
+```
+**Fix**: Sanitize tool outputs before injecting into prompt context. Never trust tool result content as instructions.
+
+### ASI02 — CLAUDE.md / Instructions File Injection
+**What**: Attacker-controlled files (CLAUDE.md, .cursorrules, system prompts) that override the agent's behavior or extract secrets.
+**Grep for**:
+```
+CLAUDE\.md                       # ensure project CLAUDE.md doesn't accept untrusted input
+\.cursorrules                    # check cursor rules file for malicious overrides
+system_prompt.*file              # system prompt loaded from a file path
+```
+**Fix**: CLAUDE.md must be under version control and reviewed on every commit. Never load system prompts from user-supplied paths.
+
+### ASI03 — MCP Server Supply Chain Risk
+**What**: MCP servers installed via `npx` or un-pinned package references that can execute arbitrary code in the agent's context.
+**Grep for**:
+```
+mcpServers                       # review all MCP server configurations
+npx.*mcp                         # npx-executed MCP servers (not pinned)
+"command".*"npx"                 # dynamic npx MCP invocations
+```
+**Fix**: Pin all MCP server packages to exact versions. Prefer locally-installed servers over npx. Review server source before installation.
+
+### ASI04 — Excessive Tool Permissions
+**What**: Agent granted filesystem write, shell exec, or network send permissions when the task only requires read access.
+**Grep for**:
+```
+allow.*Write.*true               # broad write permissions granted
+bash.*permission.*allow          # shell execution permitted
+tools.*\["bash"                  # bash tool included in agent tool list
+```
+**Fix**: Apply principle of least privilege. Grant only the minimum tool permissions required for the task.
+
+### ASI05 — Sensitive Data in Tool Calls
+**What**: Agent passes secrets, PII, or auth tokens to external tools (web search, APIs) where they may be logged or leaked.
+**Grep for**:
+```
+tool_call.*password              # password in tool argument
+tool_call.*token                 # token passed to external tool
+messages.*secret                 # secret embedded in model messages
+```
+**Fix**: Scrub secrets from all tool arguments. Use environment variables rather than embedding secrets in prompts.
+
+### ASI06 — Unvalidated Agent Action Execution
+**What**: Agent executes shell commands, file writes, or API calls without confirming with the user when the action has significant side effects.
+**Grep for**:
+```
+exec.*tool_result                # shell exec driven by tool output
+writeFile.*agent                 # agent writing files autonomously
+http\.post.*tool_call            # agent making POST requests without confirmation
+```
+**Fix**: For irreversible or high-blast-radius actions, the agent must confirm with the user before executing.
+
+### ASI07 — Insecure Direct Agent Communication
+**What**: Agent-to-agent messages that trust the calling agent's identity without verification, enabling privilege escalation.
+**Grep for**:
+```
+agent_message.*role.*user        # sub-agent message injected as user role
+from_agent.*trust                # inter-agent trust without verification
+orchestrator.*execute            # orchestrator passing actions directly
+```
+**Fix**: Treat messages from sub-agents with the same skepticism as user input. Validate before acting.
+
+### ASI08 — GitHub Actions Command Injection
+**What**: User-controlled input (PR title, branch name, issue body) injected into GitHub Actions `run:` steps via `${{ github.event.* }}`.
+**Grep for** (in `.github/workflows/*.yml`):
+```
+\$\{\{ github\.event\.pull_request\.title
+\$\{\{ github\.event\.issue\.body
+\$\{\{ github\.head_ref
+\$\{\{ github\.event\.comment\.body
+run:.*\$\{\{                     # inline expression in shell step
+```
+**Fix**: Never interpolate `github.event.*` directly into `run:` steps. Use intermediate env vars:
+```yaml
+env:
+  TITLE: ${{ github.event.pull_request.title }}
+run: echo "$TITLE"               # safe — expanded by shell, not by Actions interpolation
+```
+
+### ASI09 — Unpinned GitHub Actions (Supply Chain)
+**What**: Using `@v4` or `@main` action refs instead of full commit SHAs. A compromised action tag can exfiltrate secrets or inject malicious code.
+**Grep for** (in `.github/workflows/*.yml`):
+```
+uses:.*@v\d                      # mutable version tag
+uses:.*@main                     # mutable branch ref
+uses:.*@master                   # mutable branch ref
+```
+**Fix**: Pin every `uses:` to a full commit SHA with a comment:
+```yaml
+uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+```
+
+### ASI10 — Secrets in Workflow Environment
+**What**: Secrets printed to logs, passed as positional arguments, or embedded in URLs in CI workflows.
+**Grep for** (in `.github/workflows/*.yml`):
+```
+echo.*secrets\.                  # secret echoed to log
+run:.*\$\{\{ secrets\.           # secret interpolated inline into run step
+curl.*\$\{\{ secrets\.           # secret in curl URL (leaks in logs)
+```
+**Fix**: Always pass secrets as environment variables, never inline:
+```yaml
+env:
+  TOKEN: ${{ secrets.NPM_TOKEN }}
+run: npm publish
 ```

@@ -1,20 +1,18 @@
 # @lhi/tdd-audit
 
-Anti-Gravity Skill for TDD Remediation. Patches security vulnerabilities by applying a Test-Driven Remediation (Red-Green-Refactor) protocol — you prove the hole exists, apply the fix, and prove it's closed.
+Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — you prove the hole exists, apply the fix, and prove it's closed.
 
 ## What happens on install
 
 Running the installer does five things immediately:
 
-1. **Scans your codebase** for common vulnerability patterns (SQL injection, IDOR, XSS, command injection, path traversal, broken auth) and prints findings to stdout
+1. **Scans your codebase** for 29 vulnerability patterns (SQL injection, IDOR, XSS, command injection, path traversal, broken auth, JWT alg:none, ReDoS, timing-unsafe comparisons, and more) and prints findings to stdout
 2. **Scaffolds `__tests__/security/`** with a framework-matched boilerplate exploit test
 3. **Adds `test:security`** to your `package.json` scripts (Node.js projects)
 4. **Creates `.github/workflows/security-tests.yml`** so the CI gate exists from day one
-5. **Installs the `/tdd-audit` workflow shortcode** for your agent
+5. **Installs the `/tdd-audit` skill** for your AI coding agent
 
 ## Installation
-
-Install globally so the skill is available across all your projects:
 
 ```bash
 npx @lhi/tdd-audit
@@ -26,7 +24,16 @@ Or clone and run directly:
 node index.js
 ```
 
-### Flags
+### Platform-specific flags
+
+| Platform | Command |
+|---|---|
+| Claude Code | `npx @lhi/tdd-audit --local --claude` |
+| Gemini CLI / Codex / OpenCode | `npx @lhi/tdd-audit --local` |
+| With pre-commit hook | add `--with-hooks` |
+| Scan only (no install) | `npx @lhi/tdd-audit --scan-only` |
+
+### All flags
 
 | Flag | Description |
 |---|---|
@@ -35,11 +42,6 @@ node index.js
 | `--with-hooks` | Install a pre-commit hook that blocks commits if security tests fail |
 | `--skip-scan` | Skip the automatic vulnerability scan on install |
 | `--scan-only` | Run the vulnerability scan without installing anything |
-
-**Install to a Claude Code project with pre-commit protection:**
-```bash
-npx @lhi/tdd-audit --local --claude --with-hooks
-```
 
 ### Framework Detection
 
@@ -52,6 +54,7 @@ The installer automatically detects your project's test framework and scaffolds 
 | `mocha` | `sample.exploit.test.js` | `mocha '__tests__/security/**/*.spec.js'` |
 | `pytest.ini` / `pyproject.toml` | `sample.exploit.test.pytest.py` | `pytest tests/security/ -v` |
 | `go.mod` | `sample.exploit.test.go` | `go test ./security/... -v` |
+| `pubspec.yaml` | `sample_exploit_test.dart` | `flutter test test/security/` |
 
 ## Usage
 
@@ -71,6 +74,22 @@ The agent will:
 4. Deliver a final Remediation Summary table
 
 The agent works one vulnerability at a time and does not advance until the current one is fully proven closed.
+
+## Vulnerability Scanner
+
+The built-in scanner catches 29 patterns across OWASP Top 10 + mobile + agentic AI stacks:
+
+| Category | Patterns |
+|---|---|
+| Injection | SQL Injection, Command Injection, NoSQL Injection, Template Injection, LDAP |
+| Broken Auth | JWT alg:none, Broken Auth, Timing-Unsafe Comparison, Hardcoded Secret, Secret Fallback |
+| XSS / Output | XSS, eval() Injection, Open Redirect |
+| Crypto | Weak Crypto (MD5/SHA1), Insecure Random, TLS Bypass |
+| Server-side | SSRF, Path Traversal, XXE, Insecure Deserialization |
+| Assignment | Mass Assignment, Prototype Pollution |
+| Mobile | Sensitive Storage, WebView JS Bridge, Deep Link Injection, Android Debuggable |
+| Config | CORS Wildcard, Cleartext Traffic, Config Secrets |
+| New (v1.5) | JWT Alg None, Timing-Unsafe Comparison, ReDoS |
 
 ## Running security tests manually
 

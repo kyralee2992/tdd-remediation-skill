@@ -1,3 +1,14 @@
+---
+name: refactor-phase
+description: "Refactor Phase: run the full test suite after patching to confirm no regressions, then clean up."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: Regression & Refactor (Refactor Phase)
 
 Security fixes can be heavy-handed and break legitimate functionality. The perimeter is now secure — confirm nothing else broke, then clean up.

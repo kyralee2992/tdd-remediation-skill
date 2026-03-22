@@ -1,3 +1,14 @@
+---
+name: green-phase
+description: "Green Phase: apply the minimum targeted fix to make the exploit test pass."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: The Patch (Green Phase)
 
 Once the failing exploit test is committed, write the minimum code required to make it pass. Do not over-engineer — a targeted fix is safer than a rewrite.
