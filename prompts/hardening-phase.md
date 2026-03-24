@@ -86,12 +86,17 @@ app.use(
 For any app that uses cookie-based sessions (not pure JWT/Authorization header flows):
 
 ```javascript
-// Express — csurf (or csrf for ESM)
-const csrf = require('csurf');
-const csrfProtection = csrf({ cookie: true });
+// Express — csrf-csrf (csurf is deprecated since March 2023)
+const { doubleCsrf } = require('csrf-csrf');
 
-app.use(csrfProtection);
-app.get('/form', (req, res) => res.render('form', { csrfToken: req.csrfToken() }));
+const { generateToken, doubleCsrfProtection } = doubleCsrf({
+  getSecret: () => process.env.CSRF_SECRET,
+  cookieName: '__Host-psifi.x-csrf-token',
+  cookieOptions: { sameSite: 'strict', secure: true },
+});
+
+app.use(doubleCsrfProtection);
+app.get('/form', (req, res) => res.render('form', { csrfToken: generateToken(req, res) }));
 
 // In the HTML form:
 // <input type="hidden" name="_csrf" value="<%= csrfToken %>" />

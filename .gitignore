@@ -2,3 +2,4 @@ node_modules/
 .agents/
 .claude/
 .DS_Store
+__tests__/security/

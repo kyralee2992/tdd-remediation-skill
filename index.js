@@ -17,7 +17,7 @@ const isLocal = args.includes('--local');
 const isClaude = args.includes('--claude');
 const withHooks = args.includes('--with-hooks');
 const skipScan = args.includes('--skip-scan');
-const scanOnly = args.includes('--scan-only');
+const scanOnly = args.includes('--scan-only') || args.includes('--scan');
 
 const agentBaseDir = isLocal ? process.cwd() : os.homedir();
 const agentDirName = isClaude ? '.claude' : '.agents';

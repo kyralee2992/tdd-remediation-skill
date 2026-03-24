@@ -17,12 +17,16 @@ const {
   detectAppFramework,
   detectTestBaseDir,
   walkFiles,
+  walkMdFiles,
   isTestFile,
+  isPromptFile,
   scanAppConfig,
   scanAndroidManifest,
+  scanPromptFiles,
   quickScan,
   printFindings,
   VULN_PATTERNS,
+  PROMPT_PATTERNS,
 } = require('../../lib/scanner');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -613,5 +617,245 @@ describe('VULN_PATTERNS', () => {
     expect(severities.has('CRITICAL')).toBe(true);
     expect(severities.has('HIGH')).toBe(true);
     expect(severities.has('MEDIUM')).toBe(true);
+  });
+});
+
+// ─── PROMPT_PATTERNS — catalogue integrity ────────────────────────────────────
+
+describe('PROMPT_PATTERNS', () => {
+  test('every pattern has a name, severity, and valid RegExp', () => {
+    for (const p of PROMPT_PATTERNS) {
+      expect(typeof p.name).toBe('string');
+      expect(['CRITICAL', 'HIGH', 'MEDIUM', 'LOW']).toContain(p.severity);
+      expect(p.pattern).toBeInstanceOf(RegExp);
+    }
+  });
+
+  test('no pattern uses the global flag', () => {
+    for (const p of PROMPT_PATTERNS) {
+      expect(p.pattern.global).toBe(false);
+    }
+  });
+});
+
+// ─── isPromptFile ─────────────────────────────────────────────────────────────
+
+describe('isPromptFile', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('returns true for CLAUDE.md at project root', () => {
+    tmp = makeTmpProject({ 'CLAUDE.md': '' });
+    expect(isPromptFile(path.join(tmp, 'CLAUDE.md'), tmp)).toBe(true);
+  });
+
+  test('returns true for SKILL.md at project root', () => {
+    tmp = makeTmpProject({ 'SKILL.md': '' });
+    expect(isPromptFile(path.join(tmp, 'SKILL.md'), tmp)).toBe(true);
+  });
+
+  test('returns true for a file inside prompts/', () => {
+    tmp = makeTmpProject({ 'prompts/auto-audit.md': '' });
+    expect(isPromptFile(path.join(tmp, 'prompts/auto-audit.md'), tmp)).toBe(true);
+  });
+
+  test('returns true for a file inside skills/', () => {
+    tmp = makeTmpProject({ 'skills/tdd-remediation/SKILL.md': '' });
+    expect(isPromptFile(path.join(tmp, 'skills/tdd-remediation/SKILL.md'), tmp)).toBe(true);
+  });
+
+  test('returns true for a file inside .claude/', () => {
+    tmp = makeTmpProject({ '.claude/commands/tdd-audit.md': '' });
+    expect(isPromptFile(path.join(tmp, '.claude/commands/tdd-audit.md'), tmp)).toBe(true);
+  });
+
+  test('returns true for a file inside workflows/', () => {
+    tmp = makeTmpProject({ 'workflows/tdd-audit.md': '' });
+    expect(isPromptFile(path.join(tmp, 'workflows/tdd-audit.md'), tmp)).toBe(true);
+  });
+
+  test('returns false for README.md at project root', () => {
+    tmp = makeTmpProject({ 'README.md': '' });
+    expect(isPromptFile(path.join(tmp, 'README.md'), tmp)).toBe(false);
+  });
+
+  test('returns false for a random .md file in src/', () => {
+    tmp = makeTmpProject({ 'src/notes.md': '' });
+    expect(isPromptFile(path.join(tmp, 'src/notes.md'), tmp)).toBe(false);
+  });
+});
+
+// ─── walkMdFiles ──────────────────────────────────────────────────────────────
+
+describe('walkMdFiles', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('yields .md files and skips node_modules', () => {
+    tmp = makeTmpProject({
+      'CLAUDE.md': '',
+      'README.md': '',
+      'node_modules/some-pkg/README.md': '',
+    });
+    const found = [...walkMdFiles(tmp)].map(f => path.relative(tmp, f).replace(/\\/g, '/'));
+    expect(found).toContain('CLAUDE.md');
+    expect(found).toContain('README.md');
+    expect(found.every(f => !f.includes('node_modules'))).toBe(true);
+  });
+
+  test('does not yield non-.md files', () => {
+    tmp = makeTmpProject({ 'src/app.js': 'console.log(1)', 'CLAUDE.md': '' });
+    const found = [...walkMdFiles(tmp)].map(f => path.relative(tmp, f));
+    expect(found.every(f => f.endsWith('.md'))).toBe(true);
+  });
+});
+
+// ─── scanPromptFiles ──────────────────────────────────────────────────────────
+
+describe('scanPromptFiles', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('returns empty array when no prompt files exist', () => {
+    tmp = makeTmpProject({ 'src/app.js': 'console.log(1)' });
+    expect(scanPromptFiles(tmp)).toEqual([]);
+  });
+
+  test('flags deprecated csurf in a prompt file as CRITICAL', () => {
+    tmp = makeTmpProject({
+      'prompts/hardening.md': 'npm install csurf\nconst csrf = require("csurf");',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.some(f => f.name === 'Deprecated CSRF Package' && f.severity === 'CRITICAL')).toBe(true);
+  });
+
+  test('does NOT flag csurf in a regular source file', () => {
+    tmp = makeTmpProject({ 'src/app.js': 'const csurf = require("csurf")' });
+    expect(scanPromptFiles(tmp)).toEqual([]);
+  });
+
+  test('flags unpinned npx MCP server in CLAUDE.md', () => {
+    tmp = makeTmpProject({
+      'CLAUDE.md': '{"command": "npx", "args": ["@mcp/server"]}',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.some(f => f.name === 'Unpinned npx MCP Server' && f.severity === 'HIGH')).toBe(true);
+  });
+
+  test('flags cleartext URL in a skills/ prompt file', () => {
+    tmp = makeTmpProject({
+      'skills/my-skill/SKILL.md': 'See http://api.example.com/docs for details',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.some(f => f.name === 'Cleartext URL in Prompt')).toBe(true);
+  });
+
+  test('does NOT flag localhost http URLs', () => {
+    tmp = makeTmpProject({
+      'SKILL.md': 'curl http://localhost:3000/health',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.every(f => f.name !== 'Cleartext URL in Prompt')).toBe(true);
+  });
+
+  test('quickScan includes prompt findings', () => {
+    tmp = makeTmpProject({
+      'prompts/bad.md': 'const csrf = require("csurf")',
+    });
+    const findings = quickScan(tmp);
+    expect(findings.some(f => f.name === 'Deprecated CSRF Package')).toBe(true);
+  });
+
+  test('includes file and line number in findings', () => {
+    tmp = makeTmpProject({
+      'CLAUDE.md': 'line one\nnpm install csurf\nline three',
+    });
+    const findings = scanPromptFiles(tmp);
+    const hit = findings.find(f => f.name === 'Deprecated CSRF Package');
+    expect(hit.line).toBe(2);
+    expect(hit.file).toMatch(/CLAUDE\.md/);
+  });
+
+  // ── False-positive suppression ──────────────────────────────────────────────
+
+  test('does NOT flag csurf when it appears inside backtick code span in a Markdown table row', () => {
+    tmp = makeTmpProject({
+      'prompts/audit.md': '| `csurf` package reference | CRITICAL | use csrf-csrf instead |',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.every(f => f.name !== 'Deprecated CSRF Package')).toBe(true);
+  });
+
+  test('does NOT flag npx when "command": "npx" appears inside backtick code span', () => {
+    tmp = makeTmpProject({
+      'prompts/audit.md': '| `"command": "npx"` in MCP config | HIGH | unpinned |',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.every(f => f.name !== 'Unpinned npx MCP Server')).toBe(true);
+  });
+
+  test('does NOT flag csurf on a // comment line (deprecation warning)', () => {
+    tmp = makeTmpProject({
+      'prompts/hardening.md': '// Express — csrf-csrf (csurf is deprecated since March 2023)',
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.every(f => f.name !== 'Deprecated CSRF Package')).toBe(true);
+  });
+
+  test('does NOT flag cleartext URL for link-local 169.254.x.x addresses (SSRF test payloads)', () => {
+    tmp = makeTmpProject({
+      'prompts/red-phase.md': ".send({ url: 'http://169.254.169.254/latest/meta-data/' });",
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.every(f => f.name !== 'Cleartext URL in Prompt')).toBe(true);
+  });
+
+  test('still flags csurf in actual require() on a non-comment line', () => {
+    tmp = makeTmpProject({
+      'prompts/hardening.md': "const csrf = require('csurf');",
+    });
+    const findings = scanPromptFiles(tmp);
+    expect(findings.some(f => f.name === 'Deprecated CSRF Package')).toBe(true);
+  });
+
+  // ── audit_status: safe frontmatter suppression ───────────────────────────────
+
+  test('skips a prompt file with audit_status: safe in frontmatter', () => {
+    tmp = makeTmpProject({
+      'prompts/hardening.md': [
+        '---',
+        'audit_status: safe',
+        'audited_by: test',
+        '---',
+        "const csrf = require('csurf');",
+      ].join('\n'),
+    });
+    expect(scanPromptFiles(tmp)).toEqual([]);
+  });
+
+  test('still scans a prompt file with no frontmatter', () => {
+    tmp = makeTmpProject({
+      'prompts/hardening.md': "const csrf = require('csurf');",
+    });
+    expect(scanPromptFiles(tmp).some(f => f.name === 'Deprecated CSRF Package')).toBe(true);
+  });
+
+  test('still scans a prompt file with audit_status: reviewed (not safe)', () => {
+    tmp = makeTmpProject({
+      'prompts/hardening.md': [
+        '---',
+        'audit_status: reviewed',
+        '---',
+        "const csrf = require('csurf');",
+      ].join('\n'),
+    });
+    expect(scanPromptFiles(tmp).some(f => f.name === 'Deprecated CSRF Package')).toBe(true);
+  });
+
+  test('skips CLAUDE.md with audit_status: safe', () => {
+    tmp = makeTmpProject({
+      'CLAUDE.md': '---\naudit_status: safe\n---\n{"command": "npx", "args": []}',
+    });
+    expect(scanPromptFiles(tmp)).toEqual([]);
   });
 });
