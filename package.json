@@ -1,13 +1,14 @@
 {
   "name": "@lhi/tdd-audit",
-  "version": "1.1.1",
-  "description": "Anti-Gravity Skill for TDD Remediation. Patches security vulnerabilities using a Red-Green-Refactor protocol with automated exploit tests.",
+  "version": "1.7.0",
+  "description": "Security skill installer for Claude Code, Gemini CLI, Cursor, Codex, and OpenCode. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol.",
   "main": "index.js",
   "bin": {
     "tdd-audit": "index.js"
   },
   "files": [
     "index.js",
+    "lib/",
     "SKILL.md",
     "prompts/",
     "templates/",
@@ -16,8 +17,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "test": "node index.js --local --skip-scan && echo 'Smoke test passed'",
-    "test:security": "jest --testPathPattern=__tests__/security --forceExit"
+    "test": "jest --forceExit",
+    "test:unit": "jest --testPathPatterns=__tests__/unit --forceExit --coverage",
+    "test:security": "jest --testPathPatterns=__tests__/security --forceExit",
+    "test:smoke": "node index.js --local --skip-scan && echo 'Smoke test passed'"
   },
   "keywords": [
     "security",
@@ -31,11 +34,21 @@
     "audit",
     "claude",
     "ai-agent",
-    "skill"
+    "skill",
+    "react",
+    "nextjs",
+    "react-native",
+    "expo",
+    "flutter",
+    "mobile-security",
+    "vibecoding"
   ],
   "engines": {
     "node": ">=16.7.0"
   },
   "author": "Kyra Lee",
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "jest": "^30.3.0"
+  }
 }

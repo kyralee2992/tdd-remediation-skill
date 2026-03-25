@@ -1,3 +1,14 @@
+---
+name: refactor-phase
+description: "Refactor Phase: run the full test suite after patching to confirm no regressions, then clean up."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: Regression & Refactor (Refactor Phase)
 
 Security fixes can be heavy-handed and break legitimate functionality. The perimeter is now secure — confirm nothing else broke, then clean up.
@@ -21,6 +32,32 @@ Go through this checklist before closing the vulnerability:
 - [ ] **Auth bypass not introduced** — the fix doesn't create a new unprotected code path
 - [ ] **Performance acceptable** — the patch doesn't add unbounded DB queries or blocking I/O
 - [ ] **No secrets in code** — patch doesn't hardcode keys, tokens, or credentials
+
+**React / Next.js additions:**
+- [ ] **`dangerouslySetInnerHTML` removed or wrapped** — confirm DOMPurify is imported and called before all remaining usages
+- [ ] **Next.js middleware matcher is correct** — `/api/:path*` or tighter; public routes (health checks, webhooks) still reachable
+- [ ] **`app.json` / `.env.local` clean** — no API keys or secrets committed; `*.env` is in `.gitignore`
+
+**React Native / Expo additions:**
+- [ ] **`AsyncStorage` fully migrated** — no remaining `setItem('token', ...)` calls; `expo-secure-store` in `package.json`
+- [ ] **Offline token refresh still works** — `SecureStore.getItemAsync` is called in the right lifecycle (not before `SecureStore.isAvailableAsync()` on web)
+- [ ] **Deep link params validated** — any `route.params` passed to API calls are sanitized or type-checked
+
+**New vulnerability class additions:**
+- [ ] **SSRF allowlist verified** — `validateExternalUrl` throws on internal IPs and non-allowlisted hosts; confirm `169.254.x.x` and `10.x.x.x` are blocked
+- [ ] **Open redirect uses relative-only check** — `/^https?:\/\//` and `//` prefix both rejected; confirm legitimate in-app redirects still work
+- [ ] **NoSQL injection sanitized** — `express-mongo-sanitize` or equivalent applied globally; confirm `{ $gt: '' }` payloads return 400
+- [ ] **Mass assignment uses field allowlist** — no `req.body` passed directly to ORM; confirm privileged fields (`isAdmin`, `role`) cannot be set by user
+- [ ] **Prototype pollution sanitizes keys** — `__proto__`, `constructor`, `prototype` keys stripped before any merge; confirm `{}.polluted` is still `undefined` after merge
+- [ ] **Passwords use bcrypt/argon2** — no `createHash('md5')` or `createHash('sha1')` for passwords; `bcrypt.compare` used on login
+- [ ] **Rate limiting active on auth routes** — `/login` and `/register` return 429 after threshold; general API routes have a broader limit
+- [ ] **Helmet applied before all routes** — `X-Content-Type-Options: nosniff` and `X-Frame-Options` present in response; CSP header present
+
+**Flutter additions:**
+- [ ] **`flutter_secure_storage` in `pubspec.yaml`** — dependency present and `flutter pub get` ran
+- [ ] **No remaining `SharedPreferences` calls for sensitive keys** — grep for `prefs.getString('token')`, `prefs.setString('password', ...)`
+- [ ] **TLS `badCertificateCallback` fully removed** — grep the entire `lib/` directory for `badCertificateCallback`
+- [ ] **iOS entitlements updated if needed** — `flutter_secure_storage` requires Keychain Sharing capability on iOS
 
 ### Step 3: Clean the patch
 - Remove any debugging `console.log` or `print` statements added during patching

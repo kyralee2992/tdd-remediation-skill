@@ -1,3 +1,14 @@
+---
+name: red-phase
+description: "Red Phase: write a failing exploit test that proves the vulnerability exists before touching any code."
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-22"
+audit_status: safe
+---
+
 # TDD Remediation: The Exploit (Red Phase)
 
 Before changing a single line of the vulnerable code, you must write a test that successfully executes the exploit. If the test cannot break the app, the vulnerability isn't properly isolated.
@@ -99,8 +110,12 @@ const request = require('supertest');
 const app = require('../../app');
 
 describe('[VulnType] - Red Phase', () => {
+  let server;
+  beforeAll(() => { server = app.listen(0); });
+  afterAll(() => server.close());
+
   it('SHOULD block [exploit description]', async () => {
-    const res = await request(app)
+    const res = await request(server)
       .post('/api/vulnerable-endpoint')
       .send({ input: '<exploit payload>' });
 
@@ -119,4 +134,158 @@ def test_vuln_type_exploit(client, attacker_token):
         headers={'Authorization': f'Bearer {attacker_token}'}
     )
     assert response.status_code == 403  # currently 200 — RED
+```
+
+### React / Next.js (Vitest + Testing Library)
+```typescript
+// Sensitive storage: token must NOT land in localStorage
+import { render, fireEvent, waitFor } from '@testing-library/react';
+import LoginForm from '../../components/LoginForm';
+
+test('SHOULD NOT store auth token in localStorage', async () => {
+  render(<LoginForm />);
+  fireEvent.submit(screen.getByRole('form'));
+  await waitFor(() => {
+    expect(localStorage.getItem('token')).toBeNull(); // currently set — RED
+  });
+});
+
+// XSS: dangerouslySetInnerHTML must not accept unsanitized input
+test('SHOULD sanitize user content before rendering', () => {
+  const xssPayload = '<script>alert(1)</script>';
+  const { container } = render(<CommentBody content={xssPayload} />);
+  expect(container.innerHTML).not.toContain('<script>'); // currently reflected — RED
+});
+```
+
+### React Native / Expo (Jest)
+```javascript
+// Route param injection: params must be validated before API use
+import { renderRouter, screen } from 'expo-router/testing-library';
+
+test('SHOULD NOT pass raw route params to API query', async () => {
+  const maliciousParam = "1 UNION SELECT * FROM users";
+  // Render the screen with a crafted route param
+  renderRouter({ initialUrl: `/item/${encodeURIComponent(maliciousParam)}` });
+  // Assert the API was NOT called with the raw param
+  expect(mockApiClient.getItem).not.toHaveBeenCalledWith(maliciousParam); // currently called — RED
+});
+
+// Sensitive storage: tokens must use SecureStore, not AsyncStorage
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+test('SHOULD NOT store token in plain AsyncStorage', async () => {
+  await simulateLogin({ username: 'user', password: 'pass' });
+  const stored = await AsyncStorage.getItem('token');
+  expect(stored).toBeNull(); // currently stored in plain AsyncStorage — RED
+});
+```
+
+### SSRF (Server-Side Request Forgery)
+Supply a user-controlled URL pointing to an internal resource (e.g., `http://169.254.169.254/` AWS metadata).
+Assert a 400 or 403 — not a 200 proxying internal content.
+```javascript
+const res = await request(app)
+  .post('/api/fetch-preview')
+  .send({ url: 'http://169.254.169.254/latest/meta-data/' });
+expect(res.status).toBe(400); // currently fetches and returns internal data — RED
+```
+
+### Open Redirect
+Supply a fully external URL as the redirect destination.
+Assert a 400 or that the redirect stays within the same origin.
+```javascript
+const res = await request(app)
+  .get('/auth/callback')
+  .query({ redirect: 'https://evil.com/steal-token' });
+expect(res.status).toBe(400); // currently 302 to attacker site — RED
+// OR assert Location header is relative:
+expect(res.headers.location).not.toMatch(/^https?:\/\//);
+```
+
+### NoSQL Injection
+Supply a MongoDB operator object instead of a plain string value.
+Assert the query is rejected or returns no data.
+```javascript
+const res = await request(app)
+  .post('/api/login')
+  .send({ username: { $gt: '' }, password: { $gt: '' } });
+expect(res.status).toBe(400); // currently returns first user record — RED
+```
+
+### Mass Assignment
+Submit extra fields that should not be user-settable (e.g., `isAdmin`, `role`).
+Assert the privileged field was ignored.
+```javascript
+const res = await request(app)
+  .post('/api/users/register')
+  .send({ username: 'attacker', password: 'pass', isAdmin: true });
+expect(res.status).toBe(201);
+const user = await User.findOne({ username: 'attacker' });
+expect(user.isAdmin).toBe(false); // currently set to true — RED
+```
+
+### Prototype Pollution
+Submit a payload that sets `__proto__` to inject properties into Object.prototype.
+Assert the injected property is not visible on a fresh `{}`.
+```javascript
+const res = await request(app)
+  .post('/api/settings/merge')
+  .send({ '__proto__': { polluted: true } });
+expect(res.status).toBe(200);
+expect({}.polluted).toBeUndefined(); // currently true — RED
+```
+
+### Weak Crypto (Password Hashing)
+Hash a known password and assert the resulting hash is not a raw MD5/SHA1 hex string.
+```javascript
+const bcrypt = require('bcrypt');
+const user = await User.create({ email: 'x@x.com', password: 'mypassword' });
+// An MD5 hash of 'mypassword' is 34819d7beeabb9260a5c854bc85b3e44
+expect(user.passwordHash).not.toBe('34819d7beeabb9260a5c854bc85b3e44');
+// A proper bcrypt hash starts with $2b$
+expect(user.passwordHash).toMatch(/^\$2[aby]\$/); // currently fails — RED
+```
+
+### Missing Rate Limiting
+Send 10 rapid login attempts; assert the 11th is throttled (429).
+```javascript
+for (let i = 0; i < 10; i++) {
+  await request(app).post('/api/auth/login').send({ email: 'x@x.com', password: 'wrong' });
+}
+const res = await request(app).post('/api/auth/login').send({ email: 'x@x.com', password: 'wrong' });
+expect(res.status).toBe(429); // currently 401 — rate limit not enforced — RED
+```
+
+### Missing Security Headers
+Assert a response includes the `X-Content-Type-Options` and `X-Frame-Options` headers set by Helmet.
+```javascript
+const res = await request(app).get('/');
+expect(res.headers['x-content-type-options']).toBe('nosniff'); // currently absent — RED
+expect(res.headers['x-frame-options']).toBeDefined(); // currently absent — RED
+```
+
+### Flutter / Dart (flutter_test)
+```dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  // Sensitive storage: token must NOT be in unencrypted SharedPreferences
+  test('SHOULD NOT store auth token in SharedPreferences', () async {
+    SharedPreferences.setMockInitialValues({});
+    await simulateLogin(username: 'user', password: 'password');
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('token'), isNull,
+        reason: 'Tokens must not be in unencrypted SharedPreferences — use flutter_secure_storage'); // currently stored — RED
+  });
+
+  // TLS bypass: HTTP client must not disable certificate validation
+  test('SHOULD enforce TLS certificate verification', () {
+    final client = buildHttpClient(); // the app's HTTP client factory
+    // Inspect that no badCertificateCallback bypasses verification
+    expect(client.badCertificateCallback, isNull,
+        reason: 'badCertificateCallback must not be set to bypass TLS'); // currently bypassed — RED
+  });
+}
 ```
