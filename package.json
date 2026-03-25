@@ -1,6 +1,6 @@
 {
   "name": "@lhi/tdd-audit",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "description": "Security skill installer for Claude Code, Gemini CLI, Cursor, Codex, and OpenCode. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol.",
   "main": "index.js",
   "bin": {
