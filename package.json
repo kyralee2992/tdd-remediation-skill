@@ -50,6 +50,14 @@
   },
   "author": "Kyra Lee",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kyralee2992/tdd-remediation-skill.git"
+  },
+  "homepage": "https://github.com/kyralee2992/tdd-remediation-skill#readme",
+  "bugs": {
+    "url": "https://github.com/kyralee2992/tdd-remediation-skill/issues"
+  },
   "devDependencies": {
     "jest": "^30.3.0"
   }

@@ -1,6 +1,6 @@
 # @lhi/tdd-audit
 
-> **v1.10.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
+> **v1.11.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
 
 ## Install
 
@@ -108,15 +108,16 @@ npx @lhi/tdd-audit --scan                 # human-readable text (default)
 
 ## Testing
 
-323 tests across unit, integration, and security suites:
+423 tests across unit, E2E, and security suites:
 
 ```bash
 npm test                  # full suite
-npm run test:unit         # unit tests with coverage
+npm run test:unit         # unit tests with coverage (91.5% branch coverage)
 npm run test:security     # security regression tests only
+npm run test:e2e          # end-to-end REST API tests
 ```
 
-Security tests cover prompt injection, path traversal, rate limiting, timing-safe auth, job store bounds, SARIF schema, and more. See [`__tests__/security/`](__tests__/security/) for all 17 regression tests.
+Security tests cover prompt injection, path traversal, rate limiting, timing-safe auth, job store bounds, SARIF schema, and more. See [__tests__/security/](__tests__/security/) for all 22 regression tests.
 
 ## Documentation
 
