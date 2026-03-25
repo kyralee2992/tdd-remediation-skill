@@ -11,13 +11,24 @@ const {
   quickScan,
   printFindings,
 } = require('./lib/scanner');
+const { toJson, toSarif, toText } = require('./lib/reporter');
 
 const args = process.argv.slice(2);
-const isLocal = args.includes('--local');
-const isClaude = args.includes('--claude');
+const isLocal   = args.includes('--local');
+const isClaude  = args.includes('--claude');
 const withHooks = args.includes('--with-hooks');
-const skipScan = args.includes('--skip-scan');
-const scanOnly = args.includes('--scan-only') || args.includes('--scan');
+const skipScan  = args.includes('--skip-scan');
+const scanOnly  = args.includes('--scan-only') || args.includes('--scan');
+const isServe   = args[0] === 'serve';
+
+// --json or --format json → structured JSON output
+// --format sarif          → SARIF 2.1.0 output
+const formatIdx = args.indexOf('--format');
+const formatArg = formatIdx !== -1 ? args[formatIdx + 1] : null;
+const outputFormat = args.includes('--json') ? 'json'
+  : formatArg === 'sarif' ? 'sarif'
+  : formatArg === 'json'  ? 'json'
+  : 'text';
 
 const agentBaseDir = isLocal ? process.cwd() : os.homedir();
 const agentDirName = isClaude ? '.claude' : '.agents';
@@ -33,13 +44,30 @@ const framework = detectFramework(projectDir);
 const testBaseDir = detectTestBaseDir(projectDir, framework);
 const targetTestDir = path.join(projectDir, testBaseDir, 'security');
 
+// ─── Serve mode early exit ────────────────────────────────────────────────────
+
+if (isServe) {
+  require('./lib/server').start(args);
+  return; // server stays alive — do not fall through to installer
+}
+
 // ─── Scan-only early exit ─────────────────────────────────────────────────────
 
 if (scanOnly) {
-  process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
+  if (outputFormat !== 'text') process.stdout.write('\n🔍 Scanning...\n');
+  else process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
   const findings = quickScan(projectDir);
-  process.stdout.write('\n');
-  printFindings(findings);
+  const exempted = findings.exempted || [];
+  if (outputFormat === 'json') {
+    process.stdout.write('\n');
+    console.log(JSON.stringify(toJson(findings, exempted), null, 2));
+  } else if (outputFormat === 'sarif') {
+    process.stdout.write('\n');
+    console.log(JSON.stringify(toSarif(findings, projectDir), null, 2));
+  } else {
+    process.stdout.write('\n');
+    printFindings(findings, exempted);
+  }
   process.exit(0);
 }
 
