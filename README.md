@@ -1,6 +1,6 @@
 # @lhi/tdd-audit
 
-> **v1.9.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
+> **v1.10.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
 
 ## Install
 
@@ -25,6 +25,9 @@ On first run the installer:
 | `--with-hooks` | Add a pre-commit hook that blocks commits on failing security tests |
 | `--skip-scan` | Skip the vulnerability scan on install |
 | `--scan` / `--scan-only` | Scan only — no install, no code changes |
+| `--json` | Output findings as JSON |
+| `--format sarif` | Output findings as SARIF 2.1.0 (GitHub code scanning) |
+| `--config <path>` | Load config from an explicit file path |
 
 ### Platform
 
@@ -41,6 +44,39 @@ On first run the installer:
 
 The agent detects your stack, presents a CRITICAL → LOW findings report, waits for confirmation, then works through each vulnerability one at a time using Red-Green-Refactor. Pass `--scan` for a report-only run with no code changes.
 
+## Config file
+
+Scaffold a starter config with a single command:
+
+```bash
+npx @lhi/tdd-audit init
+# or at a custom path:
+npx @lhi/tdd-audit init ~/configs/my-audit.json
+```
+
+`.tdd-audit.json` — all CLI flags settable here, loaded automatically from your project root:
+
+```json
+{
+  "provider":          "openai",
+  "model":             "gpt-4o",
+  "apiKeyEnv":         "OPENAI_API_KEY",
+  "baseUrl":           null,
+  "output":            "text",
+  "severityThreshold": "LOW",
+  "port":              3000,
+  "serverApiKey":      null,
+  "trustProxy":        false,
+  "ignore":            ["node_modules", "dist", "build", "coverage"]
+}
+```
+
+Point to a config anywhere with `--config`:
+
+```bash
+npx @lhi/tdd-audit serve --config ~/configs/prod-audit.json
+```
+
 ## REST API + AI remediation
 
 ```bash
@@ -52,12 +88,15 @@ curl -X POST http://localhost:3000/scan \
   -H "Authorization: Bearer YOUR_SECRET" \
   -d '{"path": "."}' | jq '.summary'
 
-# Auto-fix with any AI provider
-npx @lhi/tdd-audit --scan --fix critical \
-  --provider anthropic --api-key $ANTHROPIC_API_KEY --json
+# Use any OpenAI-compatible service (Groq, OpenRouter, Together AI, etc.)
+npx @lhi/tdd-audit serve \
+  --provider openai \
+  --base-url https://api.groq.com/openai/v1 \
+  --api-key $GROQ_API_KEY \
+  --model llama-3.3-70b-versatile
 ```
 
-Supported providers: `anthropic` · `openai` · `gemini` · `ollama` (local)
+Supported providers: `anthropic` · `openai` · `gemini` · `ollama` (local) · **any OpenAI-compatible endpoint via `--base-url`**
 
 ## Output formats
 
@@ -67,26 +106,24 @@ npx @lhi/tdd-audit --scan --format sarif  # GitHub code scanning (inline PR anno
 npx @lhi/tdd-audit --scan                 # human-readable text (default)
 ```
 
-## Config file
+## Testing
 
-`.tdd-audit.json` in your project root — all CLI flags can be set here:
+323 tests across unit, integration, and security suites:
 
-```json
-{
-  "port": 3000,
-  "output": "json",
-  "provider": "anthropic",
-  "apiKeyEnv": "ANTHROPIC_API_KEY",
-  "severityThreshold": "HIGH"
-}
+```bash
+npm test                  # full suite
+npm run test:unit         # unit tests with coverage
+npm run test:security     # security regression tests only
 ```
+
+Security tests cover prompt injection, path traversal, rate limiting, timing-safe auth, job store bounds, SARIF schema, and more. See [`__tests__/security/`](__tests__/security/) for all 17 regression tests.
 
 ## Documentation
 
 | | |
 |---|---|
-| [REST API](docs/rest-api.md) | Endpoints, auth, request/response schema, curl examples |
-| [AI Remediation](docs/ai-remediation.md) | Provider setup, CLI flags, Ollama local mode |
+| [REST API](docs/rest-api.md) | Endpoints, auth, rate limiting, trust-proxy, request/response schema |
+| [AI Remediation](docs/ai-remediation.md) | Provider setup, `--base-url` for compatible APIs, config file |
 | [Scanner](docs/scanner.md) | Architecture, detection logic, false-positive handling |
 | [Vulnerability Patterns](docs/vulnerability-patterns.md) | All 34 patterns — descriptions, grep signatures, fix pointers |
 | [TDD Protocol](docs/tdd-protocol.md) | Red-Green-Refactor in full, with framework templates for all 6 stacks |
