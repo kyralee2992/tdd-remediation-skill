@@ -1,6 +1,6 @@
 # @lhi/tdd-audit
 
-> **v1.8.2** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — you prove the hole exists, apply the fix, and prove it's closed.
+> **v1.8.3** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — you prove the hole exists, apply the fix, and prove it's closed.
 
 ## What happens on install
 
