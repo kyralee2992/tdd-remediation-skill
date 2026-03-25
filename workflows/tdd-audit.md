@@ -1,5 +1,11 @@
 ---
 description: Run the complete TDD Remediation Autonomous Audit
+risk: low
+source: personal
+date_added: "2024-01-01"
+audited_by: lcanady
+last_audited: "2026-03-25"
+audit_status: safe
 ---
 Please use the TDD Remediation Protocol Auto-Audit skill (located in the `skills/tdd-remediation` folder) to secure this repository.
 

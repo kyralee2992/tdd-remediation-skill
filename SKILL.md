@@ -53,7 +53,7 @@ jobs:
   security-tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - name: Install dependencies
         run: npm ci
       - name: Run Security Exploit Tests
