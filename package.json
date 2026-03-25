@@ -1,6 +1,6 @@
 {
   "name": "@lhi/tdd-audit",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Security skill installer for Claude Code, Gemini CLI, Cursor, Codex, and OpenCode. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol.",
   "main": "index.js",
   "bin": {
@@ -21,6 +21,7 @@
     "test": "jest --forceExit",
     "test:unit": "jest --testPathPatterns=__tests__/unit --forceExit --coverage",
     "test:security": "jest --testPathPatterns=__tests__/security --forceExit",
+    "test:e2e": "jest --testPathPatterns=__tests__/e2e --forceExit",
     "test:smoke": "node index.js --local --skip-scan && echo 'Smoke test passed'"
   },
   "keywords": [

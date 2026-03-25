@@ -48,10 +48,12 @@ const targetTestDir = path.join(projectDir, testBaseDir, 'security');
 // ─── Init mode early exit ────────────────────────────────────────────────────
 
 if (args[0] === 'init') {
-  const destArg = args[1] && !args[1].startsWith('-') ? args[1] : undefined;
-  const force   = args.includes('--force');
+  const destArg    = args[1] && !args[1].startsWith('-') ? args[1] : undefined;
+  const force      = args.includes('--force');
+  const providerIdx = args.indexOf('--provider');
+  const provider   = providerIdx !== -1 ? args[providerIdx + 1] : 'openai';
   try {
-    const written = writeInitConfig(destArg, force);
+    const written = writeInitConfig(destArg, force, provider);
     console.log(`✅ Created ${path.relative(process.cwd(), written)}`);
     console.log('   Edit it, then run: node index.js serve   or   node index.js --scan');
   } catch (e) {

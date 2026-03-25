@@ -858,4 +858,66 @@ describe('scanPromptFiles', () => {
     });
     expect(scanPromptFiles(tmp)).toEqual([]);
   });
+
+  test('skips prompt files where readFileSync throws', () => {
+    tmp = makeTmpProject({ 'SKILL.md': '## skill content' });
+    const targetFile = path.join(tmp, 'SKILL.md');
+    const realRead = fs.readFileSync;
+    const spy = jest.spyOn(fs, 'readFileSync').mockImplementation((p, enc) => {
+      if (p === targetFile) throw new Error('EACCES: permission denied');
+      return realRead.call(fs, p, enc);
+    });
+    try {
+      expect(() => scanPromptFiles(tmp)).not.toThrow();
+      expect(scanPromptFiles(tmp)).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ─── quickScan — readFileSync error branch ────────────────────────────────────
+
+describe('quickScan — readFileSync error branch', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('skips source files where readFileSync throws', () => {
+    tmp = makeTmpProject({ 'src/app.js': 'res.send(req.query.x)' });
+    const targetFile = path.join(tmp, 'src', 'app.js');
+    const realRead = fs.readFileSync;
+    const spy = jest.spyOn(fs, 'readFileSync').mockImplementation((p, enc) => {
+      if (p === targetFile) throw new Error('EACCES: permission denied');
+      return realRead.call(fs, p, enc);
+    });
+    try {
+      let findings;
+      expect(() => { findings = quickScan(tmp); }).not.toThrow();
+      expect(findings.filter(f => f.file.includes('app.js'))).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ─── printFindings — exempted files ───────────────────────────────────────────
+
+describe('printFindings — exempted files', () => {
+  let consoleSpy;
+  beforeEach(() => { consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => {}); });
+  afterEach(() => consoleSpy.mockRestore());
+
+  test('lists exempted files when provided', () => {
+    printFindings([], ['prompts/safe-tool.md', 'CLAUDE.md']);
+    const allArgs = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+    expect(allArgs).toContain('prompts/safe-tool.md');
+    expect(allArgs).toContain('CLAUDE.md');
+    expect(allArgs).toMatch(/audit_status.*safe|safe.*audit_status|skipped/i);
+  });
+
+  test('does not print exempted section when exempted is empty', () => {
+    printFindings([]);
+    const allArgs = consoleSpy.mock.calls.map(c => c[0]).join('\n');
+    expect(allArgs).not.toContain('Files skipped');
+  });
 });

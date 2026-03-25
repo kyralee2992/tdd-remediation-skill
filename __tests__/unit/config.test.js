@@ -9,7 +9,7 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 
-const { loadConfig, parseCliOverrides, writeInitConfig, DEFAULTS, INIT_TEMPLATE, CONFIG_FILE } = require('../../lib/config');
+const { loadConfig, parseCliOverrides, writeInitConfig, DEFAULTS, INIT_TEMPLATE, PROVIDER_TEMPLATES, CONFIG_FILE } = require('../../lib/config');
 
 // ── DEFAULTS ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,12 @@ describe('loadConfig — no config file', () => {
     expect(cfg.port).toBe(3000);
     expect(cfg.output).toBe('text');
     expect(cfg.trustProxy).toBe(false);
+  });
+
+  test('uses process.cwd() when called without arguments', () => {
+    // Covers the `cwd = process.cwd()` default parameter branch
+    const cfg = loadConfig();
+    expect(typeof cfg.port).toBe('number');
   });
 
   test('CLI overrides win over defaults', () => {
@@ -129,6 +135,12 @@ describe('loadConfig — apiKeyEnv resolution', () => {
     expect(cfg.apiKey).toBe('explicit');
     delete process.env._TEST_TDD_KEY2;
   });
+
+  test('apiKey falls back to null when apiKeyEnv is set but env var is not defined', () => {
+    delete process.env._TEST_UNSET_KEY_XYZ;
+    const cfg = loadConfig('/tmp/nonexistent', { apiKeyEnv: '_TEST_UNSET_KEY_XYZ' });
+    expect(cfg.apiKey).toBeNull();
+  });
 });
 
 // ── parseCliOverrides ─────────────────────────────────────────────────────────
@@ -197,6 +209,27 @@ describe('writeInitConfig', () => {
     }
   });
 
+  test('defaults to openai provider', () => {
+    const out = writeInitConfig(path.join(tmpDir, CONFIG_FILE));
+    const parsed = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(parsed.provider).toBe('openai');
+    expect(parsed.model).toBe('gpt-4o');
+    expect(parsed.apiKeyEnv).toBe('OPENAI_API_KEY');
+  });
+
+  test.each(Object.keys(PROVIDER_TEMPLATES))('scaffolds correct defaults for provider: %s', (provider) => {
+    const dest = path.join(tmpDir, `${provider}.json`);
+    const out  = writeInitConfig(dest, false, provider);
+    const parsed = JSON.parse(fs.readFileSync(out, 'utf8'));
+    expect(parsed.provider).toBe(provider);
+    expect(parsed.model).toBe(PROVIDER_TEMPLATES[provider].model);
+  });
+
+  test('throws for unknown provider', () => {
+    const dest = path.join(tmpDir, CONFIG_FILE);
+    expect(() => writeInitConfig(dest, false, 'unknown-llm')).toThrow('Unknown provider');
+  });
+
   test('throws if file already exists and force is false', () => {
     const dest = path.join(tmpDir, CONFIG_FILE);
     writeInitConfig(dest);
@@ -214,5 +247,23 @@ describe('writeInitConfig', () => {
     const out = writeInitConfig(dest);
     expect(out).toBe(dest);
     expect(fs.existsSync(dest)).toBe(true);
+  });
+
+  test('uses cwd path when destPath is null (covers || fallback branch)', () => {
+    // Covers `const target = destPath || path.join(process.cwd(), CONFIG_FILE)`
+    const cwdConfigPath = path.join(process.cwd(), CONFIG_FILE);
+    const alreadyExists = fs.existsSync(cwdConfigPath);
+    if (alreadyExists) {
+      // File exists → expect "already exists" error
+      expect(() => writeInitConfig(null)).toThrow('already exists');
+    } else {
+      // File doesn't exist → will be created; clean up after
+      try {
+        const out = writeInitConfig(null);
+        expect(out).toBe(cwdConfigPath);
+      } finally {
+        if (fs.existsSync(cwdConfigPath)) fs.unlinkSync(cwdConfigPath);
+      }
+    }
   });
 });

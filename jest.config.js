@@ -5,6 +5,7 @@ module.exports = {
   testMatch: [
     '**/__tests__/unit/**/*.test.js',
     '**/__tests__/security/**/*.test.js',
+    '**/__tests__/e2e/**/*.test.js',
   ],
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['lib/**/*.js', 'index.js'],

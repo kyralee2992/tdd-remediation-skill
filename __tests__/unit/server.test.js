@@ -8,7 +8,7 @@
 
 const path = require('path');
 const {
-  handleRequest, authenticate,
+  handleRequest, authenticate, start,
   jobs, createJob, updateJob,
   safeScanPath, rateLimiter, RATE_LIMIT_MAX, MAX_JOBS,
 } = require('../../lib/server');
@@ -344,6 +344,112 @@ describe('Job store — bounded size', () => {
     const first = jobs.keys().next().value;
     createJob();
     expect(jobs.has(first)).toBe(false);
+  });
+});
+
+// ── Rate limiter — window reset ───────────────────────────────────────────────
+
+describe('Rate limiter — window reset', () => {
+  test('resets count after window expires and allows next request', async () => {
+    const ip = '44.44.44.44';
+    // Exhaust the limit
+    for (let i = 0; i < RATE_LIMIT_MAX; i++) {
+      await handleRequest(makeReq({ ip }), makeRes(), OPEN_CFG);
+    }
+    // Verify it's limited
+    const blocked = makeRes();
+    await handleRequest(makeReq({ ip }), blocked, OPEN_CFG);
+    expect(blocked.status).toBe(429);
+
+    // Backdate the window start by more than 1 minute
+    const entry = rateLimiter._counts.get(ip);
+    entry.windowStart = Date.now() - 61_000;
+
+    // Next request should be allowed (window expired and resets)
+    const allowed = makeRes();
+    await handleRequest(makeReq({ ip }), allowed, OPEN_CFG);
+    expect(allowed.status).toBe(200);
+  });
+});
+
+// ── POST /remediate — additional branches ─────────────────────────────────────
+
+describe('POST /remediate — branch coverage', () => {
+  const auth = { authorization: 'Bearer test-key' };
+
+  test('returns 400 for invalid JSON body', async () => {
+    const handlers = {};
+    const req = {
+      method: 'POST', url: '/remediate',
+      headers: { 'content-type': 'application/json', ...auth },
+      socket: { remoteAddress: '127.0.0.1' },
+      on(ev, cb) { handlers[ev] = cb; return req; },
+    };
+    setImmediate(() => {
+      if (handlers.data) handlers.data('{ bad json }');
+      setImmediate(() => { if (handlers.end) handlers.end(); });
+    });
+    const res = makeRes();
+    await handleRequest(req, res, KEYED_CFG);
+    expect(res.status).toBe(400);
+  });
+
+  test('async job status becomes error when findings is non-iterable', async () => {
+    const res = makeRes();
+    await handleRequest(
+      makeReq({
+        method: 'POST', url: '/remediate',
+        // Pass findings as a truthy non-array so remediate() throws TypeError
+        body: { findings: 'not-an-array', provider: 'openai', apiKey: 'k' },
+        headers: auth,
+      }),
+      res, KEYED_CFG,
+    );
+    expect(res.status).toBe(202);
+    const jobId = res.body.jobId;
+    // Wait for the setImmediate job to execute (two ticks: outer + inner)
+    await new Promise(r => setImmediate(() => setImmediate(r)));
+    expect(jobs.get(jobId).status).toBe('error');
+  });
+});
+
+// ── start() ───────────────────────────────────────────────────────────────────
+
+describe('start()', () => {
+  test('returns an http.Server and starts listening', (done) => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    const server = start(['--port', '0']);
+    expect(typeof server.listen).toBe('function');
+    server.on('listening', () => {
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+      server.close(done);
+    });
+  });
+
+  test('logs unauthenticated warning when no serverApiKey is set', (done) => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    const server = start(['--port', '0']);
+    server.on('listening', () => {
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('unauthenticated'));
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+      server.close(done);
+    });
+  });
+
+  test('does not log warning when serverApiKey is set', (done) => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    const server = start(['--port', '0', '--api-key', 'test-secret']);
+    server.on('listening', () => {
+      expect(stderrSpy).not.toHaveBeenCalled();
+      stderrSpy.mockRestore();
+      stdoutSpy.mockRestore();
+      server.close(done);
+    });
   });
 });
 

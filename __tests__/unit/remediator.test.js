@@ -118,6 +118,11 @@ describe('buildRemediationPrompt', () => {
     expect(p).toMatch(/patch/);
     expect(p).toMatch(/refactorChecks/);
   });
+
+  test('undefined snippet produces empty content between snippet delimiters', () => {
+    const p = buildRemediationPrompt({ ...base, snippet: undefined });
+    expect(p).toContain('<snippet></snippet>');
+  });
 });
 
 // ── callProvider ──────────────────────────────────────────────────────────────
@@ -184,6 +189,48 @@ describe('callProvider', () => {
     const calledUrl = global.fetch.mock.calls[0][0];
     expect(calledUrl).toContain('generativelanguage.googleapis.com');
   });
+
+  test('calls ollama with correct localhost URL and uses default model when null', async () => {
+    global.fetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ response: 'fixed code' }),
+    });
+    // null model → triggers `model || 'llama3'` default branch in ollama body builder
+    await callProvider('ollama', '', null, 'hello');
+    const calledUrl = global.fetch.mock.calls[0][0];
+    expect(calledUrl).toContain('localhost:11434');
+    const sentBody = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(sentBody.model).toBe('llama3');
+  });
+
+  test('error message is not redacted when apiKey is empty string', async () => {
+    global.fetch.mockResolvedValue({
+      ok: false, status: 403,
+      text: async () => 'Forbidden body without key',
+    });
+    // Empty string apiKey is falsy → `apiKey ? ... : raw` false branch
+    await expect(callProvider('ollama', '', null, 'hi')).rejects.toThrow(/403/);
+  });
+
+  test('res.text() failure is swallowed and returns empty string in error message', async () => {
+    global.fetch.mockResolvedValue({
+      ok: false, status: 500,
+      text: () => Promise.reject(new Error('stream error')),
+    });
+    await expect(callProvider('anthropic', 'key', null, 'hi')).rejects.toThrow(/500/);
+  });
+
+  test('throws for invalid baseUrl format', async () => {
+    await expect(callProvider('openai', 'key', null, 'hi', 'not-a-valid-url'))
+      .rejects.toThrow(/valid URL/);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('throws for HTTP non-localhost baseUrl (SSRF protection)', async () => {
+    await expect(callProvider('openai', 'key', null, 'hi', 'http://evil.example.com/v1'))
+      .rejects.toThrow(/HTTPS/);
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
 });
 
 // ── remediate ─────────────────────────────────────────────────────────────────
@@ -245,5 +292,42 @@ describe('remediate', () => {
     });
     expect(results[0].status).toBe('error');
     expect(results[0].error).toMatch(/Network failure/);
+  });
+
+  test('unknown severity threshold falls back to LOW (?? 3 branch)', async () => {
+    const results = await remediate({
+      findings: [findings[0]], // HIGH finding
+      provider: 'openai', apiKey: 'k',
+      severity: 'UNKNOWN_LEVEL', // not in ORDER → threshold = undefined ?? 3 = 3 (LOW)
+    });
+    // HIGH (ORDER=1) <= threshold 3, so finding is included
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  test('finding with unknown severity maps to 99 and is filtered by HIGH threshold', async () => {
+    const unknownSevFinding = {
+      severity: 'CUSTOM', name: 'Custom', file: 'a.js', line: 1,
+      snippet: 'x', likelyFalsePositive: false,
+    };
+    // severity threshold HIGH (ORDER=1); CUSTOM maps to 99 > 1, so filtered out
+    const results = await remediate({
+      findings: [unknownSevFinding],
+      provider: 'openai', apiKey: 'k',
+      severity: 'HIGH',
+    });
+    expect(results).toHaveLength(0);
+  });
+
+  test('model response with no JSON object results in error status', async () => {
+    global.fetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'sorry, no json here at all' } }] }),
+    });
+    const results = await remediate({
+      findings: [findings[0]],
+      provider: 'openai', apiKey: 'k',
+    });
+    expect(results[0].status).toBe('error');
+    expect(results[0].error).toMatch(/JSON/);
   });
 });

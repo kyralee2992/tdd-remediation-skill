@@ -150,4 +150,45 @@ describe('toText', () => {
   test('snippet is included in output', () => {
     expect(toText([REAL])).toMatch(/res\.send/);
   });
+
+  test('real finding with inTestFile:true shows [test file] badge', () => {
+    const inTest = { ...REAL, inTestFile: true, likelyFalsePositive: false };
+    expect(toText([inTest])).toMatch(/\[test file\]/);
+  });
+
+  test('finding with unknown severity falls into LOW bucket without throwing', () => {
+    const odd = { ...REAL, severity: 'UNKNOWN' };
+    expect(() => toText([odd])).not.toThrow();
+    expect(toText([odd])).toMatch(/XSS/);
+  });
+});
+
+// ── toSarif — edge branches ───────────────────────────────────────────────────
+
+describe('toSarif — branch coverage', () => {
+  test('vuln name not in CWE_MAP omits relationships and uses /0.html helpUri', () => {
+    const finding = { ...REAL, name: 'Custom Vuln Not In Map', severity: 'HIGH' };
+    const sarif = toSarif([finding]);
+    const rule = sarif.runs[0].tool.driver.rules[0];
+    expect(rule.relationships).toBeUndefined();
+    expect(rule.helpUri).toMatch(/\/0\.html/);
+  });
+
+  test('unknown severity falls back to "warning" level in result', () => {
+    const finding = { ...REAL, severity: 'UNKNOWN_SEV' };
+    const sarif = toSarif([finding]);
+    expect(sarif.runs[0].results[0].level).toBe('warning');
+  });
+
+  test('finding with no snippet uses name as message text', () => {
+    const finding = { ...REAL, snippet: undefined };
+    const sarif = toSarif([finding]);
+    expect(sarif.runs[0].results[0].message.text).toBe(REAL.name);
+  });
+
+  test('finding with empty snippet uses name as message text', () => {
+    const finding = { ...REAL, snippet: '' };
+    const sarif = toSarif([finding]);
+    expect(sarif.runs[0].results[0].message.text).toBe(REAL.name);
+  });
 });
