@@ -25,6 +25,7 @@ const {
   authenticate,
   safeScanPath,
   createRateLimit,
+  assertSafeWebhook,
   RATE_LIMIT_MAX,
 } = require('../../lib/plugin');
 const { jobs } = require('../../lib/jobs');
@@ -939,5 +940,33 @@ describe('POST /audit/ai — depth tier support in plugin mode', () => {
 
     const earlyJob = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
     expect(earlyJob.depth).toBe('tier-4');
+  });
+});
+
+// ─── assertSafeWebhook() — localhost branch (line 74) ───────────────────────
+
+describe('assertSafeWebhook() — localhost SSRF branch', () => {
+  test('rejects https://localhost — hostname check on line 74', () => {
+    expect(() => assertSafeWebhook('https://localhost/steal')).toThrow(/not allowed/);
+  });
+
+  test('rejects https://localhost:8080 (with port)', () => {
+    expect(() => assertSafeWebhook('https://localhost:8080/internal')).toThrow(/not allowed/);
+  });
+
+  test('accepts https:// with a public hostname', () => {
+    expect(() => assertSafeWebhook('https://hooks.example.com/notify')).not.toThrow();
+  });
+
+  test('rejects http:// scheme (fails on protocol check, not host check)', () => {
+    expect(() => assertSafeWebhook('http://example.com/ok')).toThrow(/https/i);
+  });
+
+  test('rejects 192.168.x.x private IP (PRIVATE_IP regex branch)', () => {
+    expect(() => assertSafeWebhook('https://192.168.1.1/internal')).toThrow(/not allowed/);
+  });
+
+  test('throws on invalid URL', () => {
+    expect(() => assertSafeWebhook('not-a-url')).toThrow(/Invalid webhook/);
   });
 });

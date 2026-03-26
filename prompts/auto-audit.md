@@ -108,12 +108,14 @@ After every completed scan (CLI, `--ai`, `POST /scan`):
 **Webhook** (`webhook_url`): POST the following JSON:
 ```json
 {
-  "project":     "<project>",
-  "org":         "<org>",
-  "timestamp":   "<ISO 8601>",
-  "duration_ms": 4200,
-  "summary":     { "critical": 1, "high": 3, "medium": 2, "low": 0 },
-  "findings":    [ ... ]
+  "project":          "<project>",
+  "org":              "<org>",
+  "security_name":    "<security_name or omitted if not set>",
+  "security_email":   "<security_email or omitted if not set>",
+  "timestamp":        "<ISO 8601>",
+  "duration_ms":      4200,
+  "summary":          { "critical": 1, "high": 3, "medium": 2, "low": 0 },
+  "findings":         [ ... ]
 }
 ```
 
@@ -134,7 +136,7 @@ Before scanning, read `.tdd-audit.json` from the repo root if it exists. Store t
 
 ```
 If .tdd-audit.json exists:
-  Load: org, project, tdd_site, badge_label,
+  Load: org, project, tdd_site, badge_label, security_name, security_email,
         pattern_repos, extra_skill_dirs, extra_repos,
         mcp_services, extra_domains
 If absent:
@@ -697,6 +699,21 @@ Once coverage is ≥ 95%, add a coverage badge to `README.md`.
 
 Adjust the percentage in the badge URL to match the real number (e.g., `97%25` for 97%).
 
+**Badge label and link defaults:**
+
+- If `badge_label` is set in config, use it as the label (e.g., `dc-audit`). Otherwise use `tdd-audit`.
+- If `tdd_site` is set in config, link the badge to that URL. Otherwise link to the `@lhi/tdd-audit` npm page (`https://www.npmjs.com/package/@lhi/tdd-audit`).
+
+```markdown
+<!-- default (no config overrides) -->
+[![tdd-audit](https://img.shields.io/badge/tdd--audit-passing-brightgreen)](https://www.npmjs.com/package/@lhi/tdd-audit)
+
+<!-- with badge_label and tdd_site set -->
+[![dc-audit](https://img.shields.io/badge/dc--audit-passing-brightgreen)](https://security.example.com)
+```
+
+The `<!-- tdd-audit-badge -->` HTML comment must follow the badge line so it can be located and updated on subsequent runs.
+
 ---
 
 ## Phase 6: SECURITY.md
@@ -722,7 +739,7 @@ Please **do not** open a public GitHub issue for security vulnerabilities.
 
 Report vulnerabilities privately via:
 - **GitHub**: Use [GitHub's private vulnerability reporting](../../security/advisories/new)
-- **Email**: security@example.com *(replace with project contact)*
+- **Contact**: <if security_name and security_email both set: "Name <email>"; if only email: email; if only name: name; if neither: "security@example.com (replace with project contact)">
 
 Expect acknowledgement within **48 hours** and a patch or mitigation plan within **14 days** for verified HIGH/CRITICAL issues. Reporters are credited in release notes unless anonymity is requested.
 
@@ -768,7 +785,7 @@ If `report: true` in config or `--format report` flag is passed, generate a mark
 ```markdown
 # Security Audit Report — <project> — <YYYY-MM-DD>
 
-**Org:** <org>  **Auditor:** tdd-audit  **Status:** Passed / Failed
+**Org:** <org>  **Auditor:** tdd-audit  **Security Contact:** <security_name if set, security_email if set, or N/A>  **Status:** Passed / Failed
 
 ## Findings Summary
 | Severity | Count | Status |

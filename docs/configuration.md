@@ -31,8 +31,10 @@ npx @lhi/tdd-audit@latest init --provider anthropic
   // For wrapper/rebranded distributions. See docs/extensibility.md.
   "org":          "Daily Caller",
   "project":      "my-project",
-  "badge_label":  "dc-audit",       // replaces "tdd-audit" in the shields.io badge
-  "tdd_site":     "https://security.example.com", // replaces npm link in badge + SARIF
+  "badge_label":       "dc-audit",                   // replaces "tdd-audit" in the shields.io badge
+  "tdd_site":          "https://security.example.com", // replaces npm link in badge + SARIF
+  "security_name":     "Alice Smith",                   // name of the security contact — stamped into SECURITY.md, compliance reports, and webhook payloads
+  "security_email":    "security@example.com",           // email for the vulnerability reporting address in SECURITY.md and payloads
 
   // ── Policy as code ────────────────────────────────────────────────────────
   // Override the default severity for any named pattern.

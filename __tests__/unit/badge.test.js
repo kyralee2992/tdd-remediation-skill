@@ -214,3 +214,80 @@ describe('badgeLine() — siteUrl / tdd_site', () => {
     expect(line).toMatch(/critical/i);
   });
 });
+
+// ─── [SEC] URL scheme injection via tdd_site ─────────────────────────────────
+
+describe('[SEC] tdd_site URL scheme injection — badge.js', () => {
+  const NPM_URL = 'https://www.npmjs.com/package/@lhi/tdd-audit';
+
+  test('[SEC] javascript: URL in tdd_site is not embedded in badge link', () => {
+    const line = badgeLine([], 'javascript:alert(document.cookie)');
+    expect(line).not.toContain('javascript:');
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('[SEC] data: URL in tdd_site is rejected and falls back to npm', () => {
+    const line = badgeLine([], 'data:text/html,<script>alert(1)</script>');
+    expect(line).not.toContain('data:');
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('[SEC] file: URL in tdd_site is rejected and falls back to npm', () => {
+    const line = badgeLine([], 'file:///etc/passwd');
+    expect(line).not.toContain('file:');
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('[SEC] protocol-relative URL in tdd_site is rejected', () => {
+    const line = badgeLine([], '//attacker.com/steal');
+    expect(line).not.toContain('//attacker.com');
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('[SEC] badge_label with markdown breakout chars cannot hijack the image URL', () => {
+    // Input: `](javascript:evil) <!--` — an attempt to break out of the alt-text
+    // and replace the image URL with a javascript: href.
+    // After stripping ][() the label becomes plain text in alt position; the
+    // image URL must remain the shields.io URL, not anything attacker-supplied.
+    const line = badgeLine([], undefined, '](javascript:evil) <!--');
+    // The actual img URL (between the first ]( and the next )) must be shields.io
+    const imgUrlMatch = line.match(/\!\[[^\]]*\]\(([^)]+)\)/);
+    expect(imgUrlMatch).not.toBeNull();
+    expect(imgUrlMatch[1]).toMatch(/^https:\/\/img\.shields\.io/);
+  });
+
+  test('[SEC] badge_label with square bracket injection does not break markdown syntax', () => {
+    const line = badgeLine([], undefined, 'label][inject');
+    expect(line).not.toContain('][inject');
+  });
+});
+
+// ─── badgeLine — custom badge_label ──────────────────────────────────────────
+
+describe('badgeLine() — badge_label / label parameter', () => {
+  test('uses custom label when label parameter is provided', () => {
+    const line = badgeLine([], null, 'my-audit');
+    expect(line).toMatch(/my--audit/); // hyphens encoded as --
+    expect(line).not.toMatch(/!\[tdd-audit\]/);
+  });
+
+  test('uses custom label in the alt text', () => {
+    const line = badgeLine([], null, 'dc-audit');
+    expect(line).toMatch(/\[dc-audit\]/);
+  });
+
+  test('falls back to "tdd-audit" when label is empty string', () => {
+    const line = badgeLine([], null, '');
+    expect(line).toMatch(/!\[tdd-audit\]/);
+  });
+
+  test('falls back to "tdd-audit" when label is whitespace only', () => {
+    const line = badgeLine([], null, '   ');
+    expect(line).toMatch(/!\[tdd-audit\]/);
+  });
+
+  test('encodes spaces in custom label as %20 in URL', () => {
+    const line = badgeLine([], null, 'My Audit');
+    expect(line).toMatch(/My%20Audit/);
+  });
+});
