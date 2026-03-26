@@ -479,13 +479,13 @@ describe('POST /audit — remediation pipeline', () => {
   test('webhook is POSTed when job completes', async () => {
     const webhookCalls = [];
     global.fetch = async (url, opts) => {
-      if (url === 'http://webhook.test/hook') webhookCalls.push(JSON.parse(opts.body));
+      if (url === 'https://webhook.test/hook') webhookCalls.push(JSON.parse(opts.body));
       return { ok: true, json: async () => ({}) };
     };
 
     const res = await app.inject({
       method: 'POST', url: '/audit',
-      payload: { path: '.', webhook: 'http://webhook.test/hook' },
+      payload: { path: '.', webhook: 'https://webhook.test/hook' },
     });
     const { jobId } = JSON.parse(res.body);
 
