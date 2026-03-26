@@ -19,6 +19,46 @@ If the user passes `--scan` or `--scan-only`, requests "audit only", or asks for
 
 ---
 
+## Config Bootstrap (runs before Phase 0 every time)
+
+Before scanning, read `.tdd-audit.json` from the repo root if it exists. Store the values — they control branding, extensibility, and session setup for this run.
+
+```
+If .tdd-audit.json exists:
+  Load: org, project, tdd_site, badge_label,
+        pattern_repos, extra_skill_dirs, extra_repos,
+        mcp_services, extra_domains
+If absent:
+  > Note: No .tdd-audit.json found. Running with built-in patterns only.
+  > Create one from docs/vulnerability-patterns.md#extensibility to add
+  > org-specific patterns, MCP services, and branding.
+```
+
+**Pattern repos** — for each entry in `pattern_repos`:
+```bash
+# First time
+git clone <url> <local_path>
+# Subsequent runs
+cd <local_path> && git pull origin main
+```
+Then index into its namespace:
+```
+/rag-implementation index --path <local_path> --namespace <namespace>
+```
+Query before every fix proposal:
+```
+/rag-engineer retrieve --namespace <namespace> "<vulnerability description>"
+```
+If a prior solution exists, lead with it — do not re-derive known fixes.
+
+**Extra skill dirs** — for each path in `extra_skill_dirs`: link into `~/.claude/skills/` if not already present.
+
+**MCP services** — for each service in `mcp_services`: start it and confirm it responds before the first agent turn. Template vars available in `args`: `${project}`, `${org}`, `${cwd}`.
+
+**Extra domains** — load each `prompt_file` from `extra_domains` alongside the built-in scan patterns in Phase 0c.
+
+---
+
 ## Phase 0: Discovery
 
 ### 0a. Detect the Stack
@@ -627,3 +667,120 @@ env:
   TOKEN: ${{ secrets.NPM_TOKEN }}
 run: npm publish
 ```
+
+---
+
+## Phase 7: Catalog to tdd-patterns (RAG Knowledge Base)
+
+**This is the final mandatory step of every audit run.** After the Remediation Summary, coverage gate, README badge, and SECURITY.md are confirmed complete, contribute any newly discovered or newly confirmed vulnerability patterns back to the `tdd-patterns` knowledge base at `~/github/tdd-patterns/` (or wherever the repo is cloned on this machine).
+
+The tdd-patterns repo is the institutional security memory used as a RAG source for future audit runs. Every pattern you contribute improves detection quality for every future audit.
+
+### What to catalog
+
+For **each vulnerability fixed during this audit** that represents a distinct pattern class:
+
+1. Check whether a matching pattern file already exists in the relevant domain directory.
+   - If it exists and is substantially covered — skip (no duplicates).
+   - If it exists but is missing a stack variant or test from this run — update it.
+   - If it does not exist — create it.
+
+2. Determine the correct domain directory:
+
+| Vulnerability class | Directory |
+|---|---|
+| SQLi, XSS, CMDi, path traversal, SSRF, open redirect, NoSQL injection, template injection, XPath | `injection/` |
+| IDOR, JWT, broken auth, timing oracle, JWT revocation, missing ownership check | `auth/` |
+| Hardcoded keys (API keys, tokens, passwords), env fallbacks, secret in prompt | `secrets/` |
+| Security headers, CSP, CSRF, cookie flags, X-Powered-By, postMessage origin | `frontend/` |
+| Prompt injection, LLM output exec, MCP poisoning, MCP SSRF, excessive agency, GitHub Actions injection, unpinned Actions, Electron | `agentic/` |
+| npm audit findings, unpinned dependencies, lockfile drift, vm2 deprecated | `deps/` |
+| Rate limiting, CORS misconfiguration, body parser DoS, GraphQL introspection, WebSocket | `infra/` |
+
+### Pattern file format
+
+Use this exact frontmatter and section structure:
+
+```markdown
+---
+id: <domain>-<short-slug>
+domain: <injection|auth|secrets|frontend|agentic|deps|infra>
+severity: <critical|high|medium|low>
+stack: "<e.g. node.js, express, *>"
+date_added: <YYYY-MM-DD>
+project: <project name or 'general'>
+---
+
+# <Vulnerability Name>
+
+## Problem
+<2–4 sentences describing what the vulnerable code looks like and what an attacker can do.>
+
+```<language>
+// WRONG — show the vulnerable pattern
+```
+
+## Root Cause
+<1–2 sentences on why developers write this (especially AI-generated code tendencies).>
+
+## Fix
+<The correct implementation with a code snippet.>
+
+```<language>
+// CORRECT
+```
+
+## Test
+<The Red-phase exploit test. Must FAIL before the fix is applied.>
+
+```javascript
+test('<describes the attack being blocked>', async () => {
+  // ... exploit attempt
+  expect(response.status).not.toBe(200); // or appropriate assertion
+});
+```
+
+## Detection
+<Grep pattern(s) to find this in a new codebase.>
+
+```
+<pattern>   # explanation
+```
+```
+
+### Example contribution workflow
+
+```bash
+# Navigate to the patterns repo
+cd ~/github/tdd-patterns
+
+# Create new pattern file
+cat > injection/prototype-pollution-bracket.md << 'EOF'
+---
+id: injection-prototype-pollution-bracket
+domain: injection
+severity: high
+stack: "node.js, express"
+date_added: 2026-03-26
+project: <your-project-name>
+---
+...
+EOF
+
+# Stage and commit
+git add injection/prototype-pollution-bracket.md
+git commit -m "feat: add prototype pollution via bracket notation pattern"
+
+# Push / open PR
+git push origin main
+```
+
+### Acknowledgement in Final Report
+
+After cataloging, add a row to the Final Report table:
+
+```
+| tdd-patterns catalog | ✅ | N new patterns contributed to ~/github/tdd-patterns/ |
+```
+
+If zero new patterns (all were already covered) — still add the row with a note that existing patterns were verified.
