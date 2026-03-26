@@ -440,22 +440,26 @@ describe('Rate limiting', () => {
 describe('start()', () => {
   const { start } = require('../../lib/server');
 
-  test('returns an http.Server instance', done => {
-    const s = start(['--port', '0']);
-    s.once('listening', () => {
-      expect(typeof s.address().port).toBe('number');
-      expect(s.address().port).toBeGreaterThan(0);
-      s.close(() => done());
-    });
+  test('returns an http.Server instance', async () => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    const s = await start(['--port', '0']);
+    expect(typeof s.address().port).toBe('number');
+    expect(s.address().port).toBeGreaterThan(0);
+    stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    await new Promise(r => s.close(r));
   });
 
-  test('server responds to GET /health after start()', done => {
-    const s = start(['--port', '0']);
-    s.once('listening', async () => {
-      const p = s.address().port;
-      const res = await req(p, 'GET', '/health');
-      expect(res.status).toBe(200);
-      s.close(() => done());
-    });
+  test('server responds to GET /health after start()', async () => {
+    const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
+    const s = await start(['--port', '0']);
+    const p = s.address().port;
+    const res = await req(p, 'GET', '/health');
+    expect(res.status).toBe(200);
+    stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    await new Promise(r => s.close(r));
   });
 });

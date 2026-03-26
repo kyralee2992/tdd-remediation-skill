@@ -144,3 +144,23 @@ describe('postReviewComments', () => {
     expect(body.comments).toHaveLength(1);
   });
 });
+
+// ─── ghFetch error — res.text() catch branch ─────────────────────────────────
+
+describe('ghFetch — res.text() failure catch branch', () => {
+  beforeEach(() => { global.fetch = jest.fn(); });
+  afterEach(() => { delete global.fetch; });
+
+  test('throws with empty message body when res.text() itself rejects', async () => {
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 503,
+      text: async () => { throw new Error('network'); }, // text() throws
+    });
+    await expect(uploadSarif({
+      owner: 'a', repo: 'b', token: 'tok',
+      ref: 'refs/heads/main', commitSha: 'abc',
+      sarif: { version: '2.1.0', runs: [] },
+    })).rejects.toThrow(/503/);
+  });
+});

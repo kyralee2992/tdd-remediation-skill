@@ -416,40 +416,35 @@ describe('POST /remediate — branch coverage', () => {
 // ── start() ───────────────────────────────────────────────────────────────────
 
 describe('start()', () => {
-  test('returns an http.Server and starts listening', (done) => {
+  test('returns an http.Server and starts listening', async () => {
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
     const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
-    const server = start(['--port', '0']);
-    expect(typeof server.listen).toBe('function');
-    server.on('listening', () => {
-      stderrSpy.mockRestore();
-      stdoutSpy.mockRestore();
-      server.close(done);
-    });
+    const server = await start(['--port', '0']);
+    expect(typeof server.address().port).toBe('number');
+    expect(server.address().port).toBeGreaterThan(0);
+    stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    await new Promise(r => server.close(r));
   });
 
-  test('logs unauthenticated warning when no serverApiKey is set', (done) => {
+  test('logs unauthenticated warning when no serverApiKey is set', async () => {
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
     const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
-    const server = start(['--port', '0']);
-    server.on('listening', () => {
-      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('unauthenticated'));
-      stderrSpy.mockRestore();
-      stdoutSpy.mockRestore();
-      server.close(done);
-    });
+    const server = await start(['--port', '0']);
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('unauthenticated'));
+    stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    await new Promise(r => server.close(r));
   });
 
-  test('does not log warning when serverApiKey is set', (done) => {
+  test('does not log warning when serverApiKey is set', async () => {
     const stderrSpy = jest.spyOn(process.stderr, 'write').mockImplementation(() => {});
     const stdoutSpy = jest.spyOn(process.stdout, 'write').mockImplementation(() => {});
-    const server = start(['--port', '0', '--api-key', 'test-secret']);
-    server.on('listening', () => {
-      expect(stderrSpy).not.toHaveBeenCalled();
-      stderrSpy.mockRestore();
-      stdoutSpy.mockRestore();
-      server.close(done);
-    });
+    const server = await start(['--port', '0', '--api-key', 'test-secret']);
+    expect(stderrSpy).not.toHaveBeenCalled();
+    stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+    await new Promise(r => server.close(r));
   });
 });
 
@@ -466,5 +461,203 @@ describe('Response security headers', () => {
     const res = makeRes();
     await handleRequest(makeReq(), res, OPEN_CFG);
     expect(res.headers['X-Frame-Options']).toBe('DENY');
+  });
+});
+
+// ─── readBody — edge cases ────────────────────────────────────────────────────
+
+describe('readBody — edge cases', () => {
+  function makeStreamReq(chunks, errorAfter = false) {
+    const handlers = {};
+    const req = {
+      method: 'POST', url: '/scan',
+      headers: { 'content-type': 'application/json' },
+      socket: { remoteAddress: '127.0.0.1' },
+      on(ev, cb) { handlers[ev] = cb; return req; },
+    };
+    setImmediate(() => {
+      for (const chunk of chunks) {
+        if (handlers.data) handlers.data(chunk);
+      }
+      setImmediate(() => {
+        if (errorAfter && handlers.error) {
+          handlers.error(new Error('socket hang up'));
+        } else if (handlers.end) {
+          handlers.end();
+        }
+      });
+    });
+    return req;
+  }
+
+  test('rejects with "Invalid JSON body" for malformed JSON', async () => {
+    const { handleRequest } = require('../../lib/server');
+    const req = makeStreamReq(['not-valid-json']);
+    const res = makeRes();
+    const cfg = { serverApiKey: null, trustProxy: false, output: 'json' };
+    await handleRequest({ ...req, method: 'POST', url: '/scan', on: req.on }, res, cfg);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/invalid json/i);
+  });
+
+  test('rejects with "Request body too large" for oversized body', async () => {
+    const { handleRequest, rateLimiter } = require('../../lib/server');
+    rateLimiter.reset();
+    const huge = 'x'.repeat(1024 * 513); // > 512 KB
+    const req = makeStreamReq([huge]);
+    const res = makeRes();
+    const cfg = { serverApiKey: null, trustProxy: false, output: 'json' };
+    await handleRequest({ ...req, method: 'POST', url: '/scan', on: req.on }, res, cfg);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/too large/i);
+  });
+});
+
+// ─── authenticate — undefined headers ────────────────────────────────────────
+
+describe('authenticate() — undefined headers', () => {
+  test('returns false when req.headers is undefined and key is set', () => {
+    const { authenticate } = require('../../lib/server');
+    expect(authenticate({ headers: undefined }, { serverApiKey: 'secret' })).toBe(false);
+  });
+
+  test('returns true when no serverApiKey and headers undefined', () => {
+    const { authenticate } = require('../../lib/server');
+    expect(authenticate({ headers: undefined }, { serverApiKey: null })).toBe(true);
+  });
+});
+
+// ─── trustProxy — x-forwarded-for branch ─────────────────────────────────────
+
+describe('handleRequest() — trustProxy: true branch', () => {
+  test('reads IP from x-forwarded-for when trustProxy is true', async () => {
+    const PROXY_CFG = { serverApiKey: null, trustProxy: true, output: 'json' };
+    // Fill rate limit for the forwarded IP, not the socket IP
+    const xffIp = '10.0.0.1';
+    const socketIp = '127.0.0.1';
+
+    // We just verify the request succeeds (the branch is hit)
+    const res = makeRes();
+    const req = makeReq({ headers: { 'x-forwarded-for': `${xffIp}, 192.168.1.1` }, ip: socketIp });
+    await handleRequest(req, res, PROXY_CFG);
+    expect(res.status).toBe(200); // /health
+  });
+});
+
+// ─── POST /scan — SARIF format branch ────────────────────────────────────────
+
+describe('handleRequest() — POST /scan format: sarif', () => {
+  test('returns SARIF document when format is sarif', async () => {
+    const res = makeRes();
+    await handleRequest(
+      makeReq({ method: 'POST', url: '/scan', body: { path: process.cwd(), format: 'sarif' } }),
+      res, OPEN_CFG,
+    );
+    expect(res.status).toBe(200);
+    // SARIF has version field
+    expect(res.body).toHaveProperty('version');
+    expect(res.body.version).toBe('2.1.0');
+  });
+});
+
+// ─── readBody — empty body '{}'  fallback ────────────────────────────────────
+
+describe('readBody — data || "{}" fallback branch', () => {
+  test('POST with no body resolves to {} (data || "{}" false branch)', async () => {
+    // Covers: data || '{}' when data is empty string
+    const res = makeRes();
+    // makeReq with null body sends no data chunk → data = '' → uses '{}'
+    const req = makeReq({ method: 'POST', url: '/scan', body: null });
+    await handleRequest(req, res, OPEN_CFG);
+    // path will be undefined → safeScanPath uses cwd → succeeds
+    expect([200, 400]).toContain(res.status);
+  });
+});
+
+// ─── handleRequest — trustProxy socket fallback branches ────────────────────
+
+describe('handleRequest() — trustProxy + socket edge cases', () => {
+  const PROXY_CFG = { serverApiKey: null, trustProxy: true, output: 'json' };
+
+  test('falls back to socket.remoteAddress when x-forwarded-for is absent (trustProxy)', async () => {
+    const res = makeRes();
+    // No x-forwarded-for header — falls back to socket.remoteAddress
+    const req = makeReq({ headers: {}, ip: '192.168.1.1' });
+    await handleRequest(req, res, PROXY_CFG);
+    expect(res.status).toBe(200);
+  });
+
+  test('uses "unknown" when socket.remoteAddress is absent (non-trustProxy)', async () => {
+    const res = makeRes();
+    // Craft a req with no socket
+    const req = makeReq();
+    delete req.socket;
+    await handleRequest(req, res, OPEN_CFG);
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── handleRequest /scan — cfg.output fallback and '||json' branch ───────────
+
+describe('handleRequest() — format fallback chain', () => {
+  test('uses cfg.output when body.format is absent', async () => {
+    const CFG = { serverApiKey: null, trustProxy: false, output: 'json' };
+    const res = makeRes();
+    await handleRequest(
+      makeReq({ method: 'POST', url: '/scan', body: { path: process.cwd() } }),
+      res, CFG,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test('uses "json" default when both body.format and cfg.output are absent', async () => {
+    const CFG = { serverApiKey: null, trustProxy: false, output: undefined };
+    const res = makeRes();
+    await handleRequest(
+      makeReq({ method: 'POST', url: '/scan', body: { path: process.cwd() } }),
+      res, CFG,
+    );
+    expect(res.status).toBe(200);
+  });
+});
+
+// ─── safeScanPath — cwd ending in path.sep (line 41 cond-expr) ───────────────
+
+describe('safeScanPath() — cwd ending in path.sep', () => {
+  test('handles cwd that already ends with path.sep (true branch of cond-expr)', () => {
+    const path = require('path');
+    const orig = process.cwd;
+    const realCwd = orig();
+    // Return a cwd that ends with path.sep so the ternary takes the true branch
+    process.cwd = () => realCwd + path.sep;
+    try {
+      // Pass a sub-path that resolves inside cwdNorm so it doesn't throw
+      expect(() => safeScanPath(path.join(realCwd, 'lib'))).not.toThrow();
+    } finally {
+      process.cwd = orig;
+    }
+  });
+});
+
+// ─── handleRequest — trustProxy with both xff and socket absent (|| '') ───────
+
+describe('handleRequest() — trustProxy x-forwarded-for + socket absent', () => {
+  test('falls back to empty string when xff absent and socket is undefined (trustProxy)', async () => {
+    const PROXY_CFG = { serverApiKey: null, trustProxy: true, output: 'json' };
+    const res = makeRes();
+    // Craft a req with no xff and no socket
+    const req = makeReq({ headers: {} });
+    delete req.socket;
+    await handleRequest(req, res, PROXY_CFG);
+    expect(res.status).toBe(200); // rate-limiter uses '' as the IP — still passes
+  });
+});
+
+// ─── start() — default-arg (args = []) ───────────────────────────────────────
+
+describe('start() — default args parameter', () => {
+  test('start() with no arguments uses default [] (covers default-arg branch)', async () => {
+    const server = await start(); // uses default args = []
+    server.close();
   });
 });

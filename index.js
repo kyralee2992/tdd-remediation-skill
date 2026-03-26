@@ -13,6 +13,7 @@ const {
 } = require('./lib/scanner');
 const { toJson, toSarif, toText } = require('./lib/reporter');
 const { writeInitConfig } = require('./lib/config');
+const { badgeLine, injectBadge } = require('./lib/badge');
 
 const args = process.argv.slice(2);
 const isLocal   = args.includes('--local');
@@ -87,6 +88,7 @@ if (scanOnly) {
     process.stdout.write('\n');
     printFindings(findings, exempted);
   }
+  injectBadge(projectDir, badgeLine(findings));
   process.exit(0);
 }
 
@@ -243,6 +245,9 @@ if (!skipScan) {
   const findings = quickScan(projectDir);
   process.stdout.write('\n');
   printFindings(findings);
+  const badge = badgeLine(findings);
+  injectBadge(projectDir, badge);
+  console.log('✅ README badge updated');
 }
 
 console.log(`\nSkill installed to ${path.relative(os.homedir(), targetSkillDir)}`);

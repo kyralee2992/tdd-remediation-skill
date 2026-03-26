@@ -1,6 +1,7 @@
 # @lhi/tdd-audit
+[![tdd-audit](https://img.shields.io/badge/tdd--audit-passing-brightgreen)](https://www.npmjs.com/package/@lhi/tdd-audit) <!-- tdd-audit-badge -->
 
-> **v1.12.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
+> **v1.14.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
 
 ## Install
 
@@ -80,13 +81,26 @@ npx @lhi/tdd-audit serve --config ~/configs/prod-audit.json
 ## REST API + AI remediation
 
 ```bash
-# Start the API server
+# Start the API server (now powered by Fastify)
 npx @lhi/tdd-audit serve --port 3000 --api-key YOUR_SECRET
 
 # Scan any path → JSON
 curl -X POST http://localhost:3000/scan \
   -H "Authorization: Bearer YOUR_SECRET" \
   -d '{"path": "."}' | jq '.summary'
+
+# Full automated pipeline: scan + remediate in one shot
+curl -X POST http://localhost:3000/audit \
+  -H "Authorization: Bearer YOUR_SECRET" \
+  -H "Content-Type: application/json" \
+  -d '{"path": ".", "provider": "anthropic", "apiKey": "sk-ant-..."}' \
+  | jq '.jobId'
+
+# Poll job status
+curl http://localhost:3000/jobs/<jobId>
+
+# Or stream real-time updates via SSE
+curl -N http://localhost:3000/jobs/<jobId>/stream
 
 # Use any OpenAI-compatible service (Groq, OpenRouter, Together AI, etc.)
 npx @lhi/tdd-audit serve \
@@ -98,6 +112,17 @@ npx @lhi/tdd-audit serve \
 
 Supported providers: `anthropic` · `openai` · `gemini` · `ollama` (local) · **any OpenAI-compatible endpoint via `--base-url`**
 
+### Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/health` | No | Version + liveness check |
+| `POST` | `/scan` | Yes | Scan a path, return findings |
+| `POST` | `/remediate` | Yes | AI-fix a findings list; returns `jobId` |
+| `POST` | `/audit` | Yes | Full scan+remediate pipeline; returns `jobId` |
+| `GET` | `/jobs/:id` | Yes | Poll job status |
+| `GET` | `/jobs/:id/stream` | Yes | SSE stream — real-time job progress |
+
 ## Output formats
 
 ```bash
@@ -108,11 +133,11 @@ npx @lhi/tdd-audit --scan                 # human-readable text (default)
 
 ## Testing
 
-463 tests across unit, E2E, and security suites:
+586 tests across unit, E2E, and security suites:
 
 ```bash
 npm test                  # full suite
-npm run test:unit         # unit tests with coverage (91.6% branch coverage)
+npm run test:unit         # unit tests with coverage (96.6% branch coverage)
 npm run test:security     # security regression tests only
 npm run test:e2e          # end-to-end REST API tests
 ```
@@ -126,7 +151,7 @@ Security tests cover prompt injection, path traversal, rate limiting, timing-saf
 | [REST API](docs/rest-api.md) | Endpoints, auth, rate limiting, trust-proxy, request/response schema |
 | [AI Remediation](docs/ai-remediation.md) | Provider setup, `--base-url` for compatible APIs, config file |
 | [Scanner](docs/scanner.md) | Architecture, detection logic, false-positive handling |
-| [Vulnerability Patterns](docs/vulnerability-patterns.md) | All 34 patterns — descriptions, grep signatures, fix pointers |
+| [Vulnerability Patterns](docs/vulnerability-patterns.md) | All 57 patterns — descriptions, grep signatures, fix pointers |
 | [TDD Protocol](docs/tdd-protocol.md) | Red-Green-Refactor in full, with framework templates for all 6 stacks |
 | [Agentic AI Security](docs/agentic-ai-security.md) | ASI01–ASI10 — prompt injection, MCP supply chain, Actions injection |
 | [Hardening](docs/hardening.md) | Phase 4 controls — Helmet, CSP, CSRF, rate limiting, gitleaks, SRI |

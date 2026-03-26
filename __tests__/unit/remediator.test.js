@@ -331,3 +331,83 @@ describe('remediate', () => {
     expect(results[0].error).toMatch(/JSON/);
   });
 });
+
+// ─── remediate — onProgress callback ─────────────────────────────────────────
+
+describe('remediate — onProgress callback', () => {
+  const mockFindings = [
+    { severity: 'HIGH', name: 'XSS', file: 'a.js', line: 1, snippet: 'x', likelyFalsePositive: false },
+    { severity: 'HIGH', name: 'SQLi', file: 'b.js', line: 2, snippet: 'y', likelyFalsePositive: false },
+  ];
+
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '{"exploitTest":{},"patch":{},"refactorChecks":[]}' } }] }),
+    });
+  });
+
+  test('onProgress is called once per finding with (completed, name)', async () => {
+    const calls = [];
+    await remediate({
+      findings: mockFindings,
+      provider: 'openai', apiKey: 'k',
+      onProgress: (completed, name) => calls.push({ completed, name }),
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({ completed: 1, name: 'XSS' });
+    expect(calls[1]).toEqual({ completed: 2, name: 'SQLi' });
+  });
+
+  test('remediate works normally when onProgress is not supplied', async () => {
+    const results = await remediate({
+      findings: mockFindings,
+      provider: 'openai', apiKey: 'k',
+      // no onProgress
+    });
+    expect(results).toHaveLength(2);
+  });
+});
+
+// ─── buildRemediationPrompt — null / undefined fields ────────────────────────
+
+describe('buildRemediationPrompt() — null/undefined field sanitization', () => {
+  test('handles null fields without throwing (covers raw ?? "" branch)', () => {
+    const prompt = buildRemediationPrompt({
+      name: null, severity: null, file: null, line: null, snippet: null,
+    });
+    expect(typeof prompt).toBe('string');
+    expect(prompt).toContain('VULNERABILITY FINDING');
+  });
+
+  test('handles undefined fields without throwing', () => {
+    const prompt = buildRemediationPrompt({
+      name: undefined, severity: undefined, file: undefined, line: undefined, snippet: undefined,
+    });
+    expect(typeof prompt).toBe('string');
+  });
+});
+
+// ─── remediate() — unknown severity ?? 99 branch ─────────────────────────────
+
+describe('remediate() — unknown severity ?? 99 in filter', () => {
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '{"exploitTest":{},"patch":{},"refactorChecks":[]}' } }] }),
+    });
+  });
+  afterEach(() => { delete global.fetch; });
+
+  test('finding with unknown severity is filtered out via ?? 99 branch', async () => {
+    // ORDER['UNKNOWN'] is undefined — ?? 99 evaluates to 99, which exceeds LOW threshold (3)
+    const findings = [
+      { severity: 'UNKNOWN', name: 'Mystery', file: 'a.js', line: 1, snippet: 'x', likelyFalsePositive: false },
+      { severity: 'HIGH',    name: 'XSS',     file: 'b.js', line: 2, snippet: 'y', likelyFalsePositive: false },
+    ];
+    const results = await remediate({ findings, provider: 'openai', apiKey: 'k' });
+    // Only HIGH passes the filter; UNKNOWN is excluded (99 > threshold=3)
+    expect(results).toHaveLength(1);
+    expect(results[0].finding.name).toBe('XSS');
+  });
+});

@@ -1,6 +1,6 @@
 # REST API
 
-`tdd-audit serve` turns the scanner into an authenticated HTTP API. Use it to integrate vulnerability scanning into dashboards, CI pipelines, bots, or any tooling that speaks JSON.
+`tdd-audit serve` turns the scanner into an authenticated HTTP API built on **Fastify**. Use it to integrate vulnerability scanning and AI remediation into dashboards, CI pipelines, bots, or any tooling that speaks JSON.
 
 ---
 
@@ -29,7 +29,7 @@ npx @lhi/tdd-audit serve --config ~/configs/prod.json
 }
 ```
 
-If `--api-key` / `serverApiKey` is omitted the server starts unauthenticated with a warning. Always set one in production.
+If `--api-key` / `serverApiKey` is omitted the server starts unauthenticated with a stderr warning. Always set one in production.
 
 ---
 
@@ -45,13 +45,13 @@ Authorization: Bearer YOUR_SECRET
 
 Missing or wrong key → `401 Unauthorized`.
 
-Tokens are compared using **HMAC + `crypto.timingSafeEqual`** to prevent timing-oracle attacks.
+Tokens are compared using **HMAC + `crypto.timingSafeEqual`** to prevent timing-oracle attacks (both values are HMAC-normalised before comparison so lengths are always equal).
 
 ### Rate limiting
 
-All endpoints are rate-limited to **60 requests / IP / minute** (default). Exceeding the limit returns `429 Too Many Requests`.
+All endpoints are rate-limited to **60 requests / IP / minute**. Exceeding the limit returns `429 Too Many Requests`.
 
-By default the rate limiter keys on the **socket IP**, not `X-Forwarded-For`, to prevent header-spoofing bypasses. Enable proxy-forwarded IPs only if you are behind a trusted reverse proxy:
+By default the rate limiter keys on the **socket IP**, not `X-Forwarded-For`, to prevent header-spoofing bypasses. Enable proxy-forwarded IPs only when you are behind a trusted reverse proxy:
 
 ```json
 { "trustProxy": true }
@@ -59,15 +59,16 @@ By default the rate limiter keys on the **socket IP**, not `X-Forwarded-For`, to
 
 ### Path validation
 
-`POST /scan` validates that the requested path is inside the server's working directory (normalised with a trailing separator to prevent sibling-directory prefix bypasses). Paths outside cwd return `400`.
+`POST /scan` and `POST /audit` validate that the requested path is inside the server's working directory. The check is normalised with a trailing path separator to prevent sibling-directory prefix bypasses (e.g. `/app-evil` cannot escape via `/app`). Paths outside cwd return `400`.
 
 ### Security headers
 
 Every response includes:
 
 ```
-X-Content-Type-Options: nosniff
-X-Frame-Options: DENY
+Content-Security-Policy: default-src 'none'
+X-Content-Type-Options:  nosniff
+X-Frame-Options:         DENY
 ```
 
 ---
@@ -79,14 +80,14 @@ X-Frame-Options: DENY
 No auth required. Returns server status and version.
 
 ```json
-{ "status": "ok", "version": "1.9.0" }
+{ "status": "ok", "version": "1.13.0" }
 ```
 
 ---
 
 ### `POST /scan`
 
-Scan a local path and return structured findings.
+Scan a local path and return structured findings synchronously.
 
 **Request**
 ```json
@@ -104,13 +105,13 @@ Scan a local path and return structured findings.
 **Response — JSON**
 ```json
 {
-  "version":             "1.9.0",
-  "summary":             { "CRITICAL": 1, "HIGH": 3, "MEDIUM": 1, "LOW": 0 },
-  "findings":            [ ... ],
+  "version":              "1.13.0",
+  "summary":              { "CRITICAL": 1, "HIGH": 3, "MEDIUM": 1, "LOW": 0 },
+  "findings":             [ ... ],
   "likelyFalsePositives": [ ... ],
-  "exempted":            [],
-  "scannedAt":           "2026-03-25T12:00:00.000Z",
-  "duration":            42
+  "exempted":             [],
+  "scannedAt":            "2026-03-25T12:00:00.000Z",
+  "duration":             42
 }
 ```
 
@@ -122,7 +123,7 @@ Returns a SARIF 2.1.0 object ready to upload to GitHub code scanning.
 
 | Status | Reason |
 |---|---|
-| 400 | Path traversal attempt, sibling-directory bypass, oversized body (> 512 KB), or invalid JSON |
+| 400 | Path traversal attempt, oversized body (> 512 KB), or invalid JSON |
 | 401 | Missing or invalid API key |
 | 429 | Rate limit exceeded |
 
@@ -130,18 +131,18 @@ Returns a SARIF 2.1.0 object ready to upload to GitHub code scanning.
 
 ### `POST /remediate`
 
-Queue an AI-powered remediation job. Returns immediately with a `jobId`; poll `/jobs/:id` for results.
+Queue an AI-powered remediation job for a **provided findings list**. Returns immediately with a `jobId`; poll `GET /jobs/:id` (or stream `GET /jobs/:id/stream`) for results.
 
-The server stores up to **1 000 jobs** in memory (TTL: 1 hour). Oldest jobs are evicted when the cap is reached.
+Use `POST /audit` instead if you want the server to run the scan itself.
 
 **Request**
 ```json
 {
   "findings": [ ... ],
-  "provider": "openai",
-  "apiKey":   "sk-...",
-  "model":    "gpt-4o",
-  "baseUrl":  "https://api.groq.com/openai/v1",
+  "provider": "anthropic",
+  "apiKey":   "sk-ant-...",
+  "model":    "claude-opus-4-6",
+  "baseUrl":  null,
   "severity": "HIGH"
 }
 ```
@@ -155,23 +156,69 @@ The server stores up to **1 000 jobs** in memory (TTL: 1 hour). Oldest jobs are 
 | `baseUrl` | no | Override base URL for any OpenAI-compatible service |
 | `severity` | no | Minimum severity to fix. Default: `LOW` (fix all) |
 
-**Response**
+**Response — 202 Accepted**
 ```json
 { "jobId": "job_1_1711363200000" }
 ```
 
+Job lifecycle: `pending → running → done | error`
+
 ---
 
-### `GET /jobs/:id`
+### `POST /audit`
 
-Poll for remediation job status.
+Full automated pipeline: **scan + AI remediation in one shot**. No interaction needed. Returns immediately with a `jobId`.
 
-**Response — pending / running**
+If no `provider`/`apiKey` are supplied, the server runs the scan only (no remediation) and the job transitions to `done` with just the `findings` array.
+
+**Request**
 ```json
-{ "id": "job_1_...", "status": "pending", "createdAt": "..." }
+{
+  "path":     ".",
+  "provider": "anthropic",
+  "apiKey":   "sk-ant-...",
+  "model":    "claude-opus-4-6",
+  "baseUrl":  null,
+  "webhook":  "https://your-server.example.com/webhook"
+}
 ```
 
-**Response — done**
+| Field | Required | Description |
+|---|---|---|
+| `path` | no | Path to scan. Defaults to cwd. Must be inside server cwd. |
+| `provider` | no | If supplied with `apiKey`, AI remediation runs after the scan |
+| `apiKey` | no | Provider API key |
+| `model` | no | Defaults per provider |
+| `baseUrl` | no | Override base URL for OpenAI-compatible providers |
+| `webhook` | no | URL to POST the final job payload to when complete (fire-and-forget) |
+
+**Response — 202 Accepted**
+
+```
+HTTP/1.1 202 Accepted
+Location: /jobs/job_1_1711363200000
+Retry-After: 2
+```
+```json
+{ "jobId": "job_1_1711363200000" }
+```
+
+Job lifecycle: `pending → scanning → scanned → remediating → done | error`
+
+Poll `GET /jobs/:id` or stream `GET /jobs/:id/stream` for progress.
+
+**Job object during remediation**
+```json
+{
+  "id":        "job_1_...",
+  "status":    "remediating",
+  "total":     8,
+  "completed": 3,
+  "current":   "SQL Injection"
+}
+```
+
+**Job object when done**
 ```json
 {
   "id":          "job_1_...",
@@ -179,6 +226,7 @@ Poll for remediation job status.
   "createdAt":   "...",
   "startedAt":   "...",
   "completedAt": "...",
+  "findings":    [ ... ],
   "results": [
     {
       "finding":        { ... },
@@ -193,28 +241,130 @@ Poll for remediation job status.
 
 ---
 
-## Examples
+### `GET /jobs/:id`
 
-### curl
+Poll for job status. Works for jobs created by both `POST /remediate` and `POST /audit`.
+
+**Response — pending / scanning**
+```json
+{ "id": "job_1_...", "status": "scanning", "createdAt": "..." }
+```
+
+**Response — remediating (with progress)**
+```json
+{
+  "id":        "job_1_...",
+  "status":    "remediating",
+  "total":     8,
+  "completed": 3,
+  "current":   "SQL Injection"
+}
+```
+
+**Response — done**
+```json
+{
+  "id":          "job_1_...",
+  "status":      "done",
+  "createdAt":   "...",
+  "startedAt":   "...",
+  "completedAt": "...",
+  "results":     [ ... ]
+}
+```
+
+**Response — error**
+```json
+{ "id": "job_1_...", "status": "error", "error": "Provider returned 401: ..." }
+```
+
+The job store keeps up to **1 000 jobs** in memory (TTL: 1 hour). Oldest jobs are evicted when the cap is reached.
+
+---
+
+### `GET /jobs/:id/stream`
+
+Real-time job progress via **Server-Sent Events (SSE)**. The server pushes an event each time the job state changes, and closes the connection when the job reaches `done` or `error`.
 
 ```bash
-# Start server
+curl -N http://localhost:3000/jobs/job_1_.../stream \
+  -H "Authorization: Bearer YOUR_SECRET"
+```
+
+**Event format**
+```
+data: {"id":"job_1_...","status":"scanning","createdAt":"..."}
+
+data: {"id":"job_1_...","status":"scanned","findings":[...]}
+
+data: {"id":"job_1_...","status":"remediating","total":8,"completed":1,"current":"SQL Injection"}
+
+data: {"id":"job_1_...","status":"done","completedAt":"...","results":[...]}
+```
+
+The connection is closed automatically after the terminal state (`done` / `error`). If you connect to an already-completed job, the server pushes the current state and closes immediately.
+
+**Node.js example using EventSource**
+```javascript
+const es = new EventSource(
+  'http://localhost:3000/jobs/job_1_.../stream',
+  { headers: { Authorization: 'Bearer YOUR_SECRET' } }
+);
+es.onmessage = (e) => {
+  const job = JSON.parse(e.data);
+  if (job.status === 'done') { console.log(job.results); es.close(); }
+  if (job.status === 'error') { console.error(job.error); es.close(); }
+};
+```
+
+---
+
+## Full workflow examples
+
+### curl — scan only
+
+```bash
 npx @lhi/tdd-audit serve --port 3000 --api-key mysecret &
 
-# Scan current directory
 curl -s -X POST http://localhost:3000/scan \
   -H "Authorization: Bearer mysecret" \
   -H "Content-Type: application/json" \
   -d '{"path": "."}' | jq '.summary'
+```
 
-# SARIF output for GitHub upload
+### curl — full pipeline with polling
+
+```bash
+# Kick off audit
+JOB=$(curl -s -X POST http://localhost:3000/audit \
+  -H "Authorization: Bearer mysecret" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "path":     ".",
+    "provider": "anthropic",
+    "apiKey":   "sk-ant-..."
+  }' | jq -r '.jobId')
+
+# Poll until done
+while true; do
+  STATUS=$(curl -s http://localhost:3000/jobs/$JOB \
+    -H "Authorization: Bearer mysecret" | jq -r '.status')
+  echo "Status: $STATUS"
+  [ "$STATUS" = "done" ] || [ "$STATUS" = "error" ] && break
+  sleep 2
+done
+```
+
+### curl — SARIF output for GitHub code scanning
+
+```bash
 curl -s -X POST http://localhost:3000/scan \
   -H "Authorization: Bearer mysecret" \
   -H "Content-Type: application/json" \
   -d '{"path": ".", "format": "sarif"}' > results.sarif
 ```
 
-### Node.js
+### Node.js — scan
 
 ```javascript
 const res = await fetch('http://localhost:3000/scan', {

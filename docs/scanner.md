@@ -8,10 +8,12 @@
 
 | Export | Purpose |
 |---|---|
-| `quickScan(projectDir)` | Walk all source files and return a findings array |
+| `quickScan(projectDir)` | Walk all source files and return a merged findings array |
 | `scanPromptFiles(projectDir)` | Walk all `.md` prompt/skill files and check for prompt-specific patterns |
 | `scanAppConfig(projectDir)` | Check `app.json` / `app.config.*` for embedded secrets |
 | `scanAndroidManifest(projectDir)` | Check `AndroidManifest.xml` for `android:debuggable="true"` |
+| `scanPackageJson(projectDir)` | Check `package.json` lifecycle scripts for supply-chain exfiltration (postinstall curl/wget) |
+| `scanEnvFiles(projectDir)` | Check `.env*` files for `NEXT_PUBLIC_*SECRET/KEY/TOKEN` leaking secrets to the browser |
 | `printFindings(findings, exempted)` | Format and print a findings report to stdout |
 | `detectFramework(dir)` | Detect the test framework (`jest`, `vitest`, `mocha`, `pytest`, `go`, `flutter`) |
 | `detectAppFramework(dir)` | Detect the UI framework (`nextjs`, `expo`, `react-native`, `react`, `flutter`) |
@@ -23,7 +25,7 @@
 
 ```
 projectDir
-  └─ walkFiles()          — yields .js/.ts/.jsx/.tsx/.mjs/.py/.go/.dart files
+  └─ walkFiles()           — yields source files (see Scanned extensions below)
        └─ for each file:
             1. Read file content (read-first, check length after — no TOCTOU)
             2. Skip if content.length > 512 KB
@@ -32,12 +34,14 @@ projectDir
                  – If pattern matches, push finding with severity / name / file / line / snippet
                  – inTestFile: true if path is under a test directory
                  – likelyFalsePositive: true if inTestFile && pattern.skipInTests
-  └─ scanAppConfig()      — checks app.json / app.config.* for secret patterns
-  └─ scanAndroidManifest() — checks android:debuggable
-  └─ scanPromptFiles()    — walks .md files in prompt directories
+  └─ scanAppConfig()       — checks app.json / app.config.* for embedded secret patterns
+  └─ scanAndroidManifest() — checks android:debuggable="true"
+  └─ scanPromptFiles()     — walks .md files in agent config directories for prompt-specific patterns
+  └─ scanPackageJson()     — checks postinstall/preinstall lifecycle scripts for curl/wget exfiltration
+  └─ scanEnvFiles()        — checks .env* files for NEXT_PUBLIC_* keys with secret-sounding names
 ```
 
-All four result sets are merged into one array and returned to the caller.
+All six result sets are merged into one array and returned to the caller.
 
 ---
 
@@ -47,7 +51,7 @@ All four result sets are merged into one array and returned to the caller.
 
 Yields scannable source files (`SCAN_EXTENSIONS`). Skips:
 
-- **`SKIP_DIRS`**: `node_modules`, `.git`, `dist`, `build`, `.next`, `out`, `__pycache__`, `venv`, `.venv`, `vendor`, `.expo`, `.dart_tool`, `.pub-cache`
+- **`SKIP_DIRS`**: `node_modules`, `.git`, `dist`, `build`, `coverage`, `.next`, `out`, `__pycache__`, `venv`, `.venv`, `vendor`, `.expo`, `.dart_tool`, `.pub-cache`
 - **Symlinks** — never followed, preventing escape from the project root on shared/M-series filesystems
 
 ### `walkMdFiles(dir)`
@@ -58,9 +62,9 @@ Same skip rules, yields `.md` files only. Used by `scanPromptFiles`.
 
 ## Scanned extensions
 
-`.js` `.ts` `.jsx` `.tsx` `.mjs` `.py` `.go` `.dart`
+`.js` `.ts` `.jsx` `.tsx` `.mjs` `.py` `.go` `.dart` `.yml` `.yaml`
 
-YAML, JSON, XML, and shell files are not scanned by the code scanner. CI workflow files (`.yml`) are scanned separately when explicitly passed to the ASI08/ASI09 grep patterns during an agent-driven audit.
+JSON and XML files are not walked by the code scanner. `package.json` is handled by `scanPackageJson()` and `.env*` files by `scanEnvFiles()` — both run as separate targeted checks. CI workflow files (`.yml`/`.yaml`) **are** now scanned by `walkFiles()` for GitHub Actions expression injection and similar patterns.
 
 ---
 

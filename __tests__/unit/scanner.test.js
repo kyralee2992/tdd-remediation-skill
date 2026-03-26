@@ -29,6 +29,7 @@ const {
   printFindings,
   VULN_PATTERNS,
   PROMPT_PATTERNS,
+  MAX_SCAN_FILE_BYTES,
 } = require('../../lib/scanner');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1224,5 +1225,233 @@ describe('scanPromptFiles — MCP Tool Poisoning', () => {
     });
     const findings = scanPromptFiles(tmp);
     expect(findings.every(f => f.name !== 'MCP Tool Poisoning')).toBe(true);
+  });
+});
+
+// ─── scanEnvFiles — error handling ───────────────────────────────────────────
+
+describe('scanEnvFiles — error handling', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('silently skips unreadable .env file (catch branch)', () => {
+    const fs   = require('fs');
+    const os   = require('os');
+    const path = require('path');
+    tmp = makeTmpProject({ '.env': 'NEXT_PUBLIC_SECRET_KEY=oops\n' });
+    // Make the file unreadable
+    const envPath = path.join(tmp, '.env');
+    try {
+      fs.chmodSync(envPath, 0o000);
+      // Should not throw — catch continues
+      expect(() => scanEnvFiles(tmp)).not.toThrow();
+    } finally {
+      // Restore so afterEach cleanup can delete
+      fs.chmodSync(envPath, 0o644);
+    }
+  });
+});
+
+// ─── detectFramework — vitest / mocha ─────────────────────────────────────────
+
+describe('detectFramework() — vitest and mocha', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('returns "vitest" when vitest is in devDependencies', () => {
+    tmp = makeTmpProject({ 'package.json': JSON.stringify({ devDependencies: { vitest: '^1.0.0' } }) });
+    expect(detectFramework(tmp)).toBe('vitest');
+  });
+
+  test('returns "mocha" when mocha is in devDependencies', () => {
+    tmp = makeTmpProject({ 'package.json': JSON.stringify({ devDependencies: { mocha: '^10.0.0' } }) });
+    expect(detectFramework(tmp)).toBe('mocha');
+  });
+});
+
+// ─── detectAppFramework — expo / react-native / nextjs / react ────────────────
+
+describe('detectAppFramework() — all framework branches', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('returns "expo" when expo is in dependencies', () => {
+    tmp = makeTmpProject({ 'package.json': JSON.stringify({ dependencies: { expo: '*' } }) });
+    expect(detectAppFramework(tmp)).toBe('expo');
+  });
+
+  test('returns "react-native" when react-native is in deps (no expo)', () => {
+    tmp = makeTmpProject({ 'package.json': JSON.stringify({ dependencies: { 'react-native': '*' } }) });
+    expect(detectAppFramework(tmp)).toBe('react-native');
+  });
+
+  test('returns "nextjs" when next is in deps (no expo or react-native)', () => {
+    tmp = makeTmpProject({ 'package.json': JSON.stringify({ dependencies: { next: '*' } }) });
+    expect(detectAppFramework(tmp)).toBe('nextjs');
+  });
+
+  test('returns "react" when react is in deps (no next or rn)', () => {
+    tmp = makeTmpProject({ 'package.json': JSON.stringify({ dependencies: { react: '*' } }) });
+    expect(detectAppFramework(tmp)).toBe('react');
+  });
+});
+
+// ─── printFindings — unknown severity and inTestFile badge ────────────────────
+
+describe('printFindings() — unknown severity and inTestFile', () => {
+  test('maps unknown severity to LOW bucket without throwing', () => {
+    // Covers: (bySeverity[f.severity] || bySeverity.LOW)
+    const findings = [{
+      severity: 'UNKNOWN', name: 'Mystery', file: 'a.js', line: 1,
+      snippet: 'x', likelyFalsePositive: false,
+    }];
+    expect(() => printFindings(findings)).not.toThrow();
+  });
+
+  test('appends [test file] badge when inTestFile is true', () => {
+    // Covers: f.inTestFile ? ' [test file]' : ''
+    const findings = [{
+      severity: 'HIGH', name: 'XSS', file: '__tests__/x.test.js', line: 1,
+      snippet: 'x', likelyFalsePositive: false, inTestFile: true,
+    }];
+    expect(() => printFindings(findings)).not.toThrow();
+  });
+});
+
+// ─── large-file skip — scanEnvFiles / scanPromptFiles / quickScan ─────────────
+
+describe('large-file skip branches', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('scanEnvFiles skips .env files over MAX_SCAN_FILE_BYTES', () => {
+    const bigContent = 'NEXT_PUBLIC_SECRET_KEY=oops\n' + 'x'.repeat(MAX_SCAN_FILE_BYTES + 1);
+    tmp = makeTmpProject({ '.env': bigContent });
+    expect(scanEnvFiles(tmp)).toHaveLength(0);
+  });
+
+  test('quickScan skips source files over MAX_SCAN_FILE_BYTES', () => {
+    const bigContent = 'innerHTML = x;\n' + 'x'.repeat(MAX_SCAN_FILE_BYTES + 1);
+    tmp = makeTmpProject({ 'big.js': bigContent });
+    const findings = quickScan(tmp).filter(f => f.file === 'big.js');
+    expect(findings).toHaveLength(0);
+  });
+
+  test('scanPromptFiles skips prompt files over MAX_SCAN_FILE_BYTES', () => {
+    const bigContent = '---\nname: test\n---\nhttp://example.com\n' + 'x'.repeat(MAX_SCAN_FILE_BYTES + 1);
+    tmp = makeTmpProject({ '.claude/skills/big.md': bigContent });
+    expect(scanPromptFiles(tmp)).toHaveLength(0);
+  });
+});
+
+// ─── detectFramework / detectAppFramework — malformed package.json catch ──────
+
+describe('detectFramework() — malformed package.json catch branch', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('falls back to jest when package.json is malformed JSON', () => {
+    tmp = makeTmpProject({ 'package.json': 'not valid json {{{' });
+    // catch {} block is entered; returns fallback 'jest'
+    expect(detectFramework(tmp)).toBe('jest');
+  });
+});
+
+describe('detectAppFramework() — malformed package.json catch branch', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('returns null when package.json is malformed JSON', () => {
+    tmp = makeTmpProject({ 'package.json': 'not valid json {{{' });
+    expect(detectAppFramework(tmp)).toBeNull();
+  });
+});
+
+// ─── walkMdFiles — symlink skip ───────────────────────────────────────────────
+
+describe('walkMdFiles() — symlink skip', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('does not yield symlinked files', () => {
+    const fs   = require('fs');
+    const path = require('path');
+    tmp = makeTmpProject({ 'real.md': '# real\n' });
+    const link = path.join(tmp, 'link.md');
+    try {
+      fs.symlinkSync(path.join(tmp, 'real.md'), link);
+    } catch {
+      return; // symlinks not supported on this system — skip
+    }
+    const results = [...walkMdFiles(tmp)];
+    const paths = results.map(p => path.basename(p));
+    expect(paths).not.toContain('link.md');
+    expect(paths).toContain('real.md');
+  });
+});
+
+// ─── scanPromptFiles — null-byte binary skip ──────────────────────────────────
+
+describe('scanPromptFiles() — binary file null-byte skip', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('skips prompt files containing null bytes', () => {
+    // Write a .md file with a null byte (binary signal) inside a prompt dir
+    const fs   = require('fs');
+    const path = require('path');
+    tmp = makeTmpProject({});
+    const promptDir = path.join(tmp, '.claude', 'skills');
+    fs.mkdirSync(promptDir, { recursive: true });
+    fs.writeFileSync(path.join(promptDir, 'binary.md'), 'npx evil\0\x00binary content');
+    const findings = scanPromptFiles(tmp);
+    expect(findings).toHaveLength(0);
+  });
+});
+
+// ─── detectFramework — pkg.dependencies || {} false branch (devDeps only) ────
+
+describe('detectFramework() — pkg.dependencies || {} false branch', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('covers pkg.dependencies || {} false branch via devDependencies-only pkg', () => {
+    // No "dependencies" key → pkg.dependencies is undefined → || {} is used
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ devDependencies: { mocha: '^10.0.0' } }),
+    });
+    expect(detectFramework(tmp)).toBe('mocha');
+  });
+
+  test('falls through mocha check (line 105 false branch) when no framework deps present', () => {
+    // Has a package.json but none of vitest/jest/supertest/mocha → mocha check is false → falls through
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { lodash: '*' } }),
+    });
+    // Falls through all framework checks → returns 'jest' (default)
+    expect(detectFramework(tmp)).toBe('jest');
+  });
+});
+
+// ─── detectAppFramework — pkg.dependencies || {} false branch (devDeps only) ──
+
+describe('detectAppFramework() — pkg.dependencies || {} false branch', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('covers pkg.dependencies || {} false branch via devDependencies-only pkg', () => {
+    // No "dependencies" key → pkg.dependencies undefined → || {} false branch
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ devDependencies: { next: '*' } }),
+    });
+    expect(detectAppFramework(tmp)).toBe('nextjs');
+  });
+
+  test('falls through next check (line 133 false branch) to find react in devDeps', () => {
+    // No "next" dep → if (deps.next) false → falls through → finds react
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ devDependencies: { react: '*' } }),
+    });
+    expect(detectAppFramework(tmp)).toBe('react');
   });
 });
