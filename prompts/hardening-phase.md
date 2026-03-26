@@ -321,6 +321,94 @@ If this project contains AI agent code, MCP configurations, or CLAUDE.md files, 
 
 ---
 
+## 4l. Coverage Gate (≥ 95%)
+
+After hardening is complete, measure test coverage and drive it to **≥ 95% line and branch coverage** before closing the audit.
+
+```bash
+# Node.js / Jest
+npx jest --coverage --coverageReporters=text
+
+# Python
+pytest --cov=. --cov-report=term-missing
+
+# Go
+go test ./... -coverprofile=coverage.out && go tool cover -func=coverage.out
+```
+
+1. Run the coverage report and note every uncovered line or branch.
+2. For each gap: write a failing test (Red), make it pass (Green), re-run coverage.
+3. Repeat until line **and** branch coverage both reach ≥ 95%.
+4. Files that are intentionally excluded (generated code, migration stubs) must be listed in the coverage config with a reason.
+
+Do **not** write trivially-true tests to inflate numbers — every test must assert real behavior.
+
+---
+
+## 4m. Badge README
+
+Once coverage is ≥ 95%, add (or update) a coverage badge in `README.md`. If no `README.md` exists, create a minimal one.
+
+The badge must appear at the **top of the file**, before any other content:
+
+```markdown
+![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
+```
+
+**Colour tiers:**
+
+| Coverage | Colour |
+|---|---|
+| ≥ 90% | `brightgreen` |
+| 75–89% | `yellow` |
+| < 75% | `red` |
+
+Adjust the percentage to match the actual measured value (e.g., `97%25` for 97%). Do not overwrite other existing badges — add the coverage badge as the first badge on the line.
+
+---
+
+## 4n. SECURITY.md
+
+Check whether a `SECURITY.md` exists at the repo root. **Do not overwrite an existing file.**
+
+If absent, create one following the GitHub Security Advisory format:
+
+```markdown
+# Security Policy
+
+## Supported Versions
+
+| Version | Supported |
+|---|---|
+| latest | ✅ |
+| < latest | ❌ |
+
+## Reporting a Vulnerability
+
+Please **do not** open a public GitHub issue for security vulnerabilities.
+
+Report privately via:
+- **GitHub**: Use [GitHub's private vulnerability reporting](../../security/advisories/new)
+- **Email**: security@example.com *(replace with project contact)*
+
+Expect acknowledgement within **48 hours** and a patch or mitigation plan within **14 days** for verified HIGH/CRITICAL issues. Reporters are credited in release notes unless anonymity is requested.
+
+## Security Hardening
+
+This repository is maintained with the following controls:
+
+- HTTP security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options)
+- Rate limiting on all state-mutating and authentication routes
+- Dependencies audited on every CI run (`npm audit --audit-level=high`)
+- No secrets committed to git history (verified with gitleaks / trufflehog)
+- ≥ 95% test coverage enforced via CI coverage gate
+- Vulnerabilities remediated using a Red-Green-Refactor exploit-test protocol
+```
+
+Replace placeholder email and version table with the project's real information.
+
+---
+
 ## 4k. Hardening Verification Checklist
 
 After Phase 4, confirm all of the following:
@@ -341,3 +429,6 @@ After Phase 4, confirm all of the following:
 - [ ] `CLAUDE.md` in version control and reviewed; no user-supplied content
 - [ ] MCP servers pinned to exact versions or local installs
 - [ ] Agent tool permissions scoped to minimum required
+- [ ] Test coverage ≥ 95% line and branch (4l)
+- [ ] `README.md` has a coverage badge at the top reflecting the actual % (4m)
+- [ ] `SECURITY.md` exists at repo root with a private vulnerability reporting contact (4n)

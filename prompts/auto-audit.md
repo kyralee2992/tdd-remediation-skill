@@ -400,6 +400,115 @@ After all vulnerabilities are addressed, output a final **Remediation Summary**:
 
 ---
 
+## Phase 4: Coverage Gate (≥ 95%)
+
+After all vulnerabilities are patched and the hardening checklist is complete, measure test coverage and drive it to **≥ 95% line and branch coverage**.
+
+```bash
+# Node.js / Jest
+npx jest --coverage --coverageReporters=text
+
+# Python
+pytest --cov=. --cov-report=term-missing
+
+# Go
+go test ./... -coverprofile=coverage.out && go tool cover -func=coverage.out
+```
+
+1. Run the coverage report.
+2. Identify every uncovered line or branch.
+3. For each gap: write a test (Red — must fail without the code path), confirm it passes (Green), re-run coverage.
+4. Repeat until the overall line **and** branch coverage both reach ≥ 95%.
+5. If a file is intentionally excluded (e.g., generated code, migration stubs), add it to the coverage exclusion config and note the reason.
+
+Do **not** write empty or trivially-true tests to inflate numbers. Every test must assert real behavior.
+
+---
+
+## Phase 5: Badge README
+
+Once coverage is ≥ 95%, add a coverage badge to `README.md`.
+
+- If `README.md` does not exist, create a minimal one with the project name and badge.
+- The badge must appear at the **top of the file**, before any other content.
+- Use a static Shields.io badge that reflects the actual measured value:
+
+```markdown
+![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
+```
+
+**Colour tiers:**
+
+| Coverage | Colour |
+|---|---|
+| ≥ 90% | `brightgreen` |
+| 75–89% | `yellow` |
+| < 75% | `red` |
+
+Adjust the percentage in the badge URL to match the real number (e.g., `97%25` for 97%).
+
+---
+
+## Phase 6: SECURITY.md
+
+Check whether a `SECURITY.md` exists at the repo root.
+
+- **If it exists** — do not overwrite it. Read it and confirm it has a vulnerability reporting contact. If missing, append one.
+- **If it does not exist** — create it following the GitHub Security Advisory format:
+
+```markdown
+# Security Policy
+
+## Supported Versions
+
+| Version | Supported |
+|---|---|
+| latest | ✅ |
+| < latest | ❌ |
+
+## Reporting a Vulnerability
+
+Please **do not** open a public GitHub issue for security vulnerabilities.
+
+Report vulnerabilities privately via:
+- **GitHub**: Use [GitHub's private vulnerability reporting](../../security/advisories/new)
+- **Email**: security@example.com *(replace with project contact)*
+
+Expect acknowledgement within **48 hours** and a patch or mitigation plan within **14 days** for verified HIGH/CRITICAL issues. Reporters are credited in release notes unless anonymity is requested.
+
+## Security Hardening
+
+This repository is maintained with the following controls:
+
+- HTTP security headers (CSP, HSTS, X-Frame-Options, X-Content-Type-Options)
+- Rate limiting on all state-mutating and authentication routes
+- Dependencies audited on every CI run (`npm audit --audit-level=high`)
+- No secrets committed to git history (verified with gitleaks / trufflehog)
+- ≥ 95% test coverage enforced via CI coverage gate
+- Vulnerabilities remediated using a Red-Green-Refactor exploit-test protocol
+```
+
+Replace placeholder email and version table with the project's real information.
+
+---
+
+## Final Report
+
+After Phases 4–6 complete, append to the Remediation Summary:
+
+```
+## Coverage & Documentation
+
+| Item | Status | Detail |
+|---|---|---|
+| Line coverage   | ✅ | 96.4% |
+| Branch coverage | ✅ | 95.1% |
+| README badge    | ✅ | Updated to 96% (brightgreen) |
+| SECURITY.md     | ✅ | Created at repo root |
+```
+
+---
+
 ## Agentic AI Security (ASI01–ASI10)
 
 When the project contains AI agent code, MCP configurations, CLAUDE.md files, or tool-calling patterns, also scan for agentic-specific vulnerabilities. These can be harder to spot than traditional web vulns but carry severe consequences (data exfiltration via tool abuse, agent hijacking, supply chain via MCP).

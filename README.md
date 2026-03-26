@@ -1,7 +1,7 @@
 # @lhi/tdd-audit
 [![tdd-audit](https://img.shields.io/badge/tdd--audit-passing-brightgreen)](https://www.npmjs.com/package/@lhi/tdd-audit) <!-- tdd-audit-badge -->
 
-> **v1.14.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed.
+> **v1.15.0** — Security skill installer for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Patches vulnerabilities using a Red-Green-Refactor exploit-test protocol — prove the hole exists, apply the fix, prove it's closed. Enforces ≥ 95% test coverage, README badge, and SECURITY.md on every audit.
 
 ## Install
 
