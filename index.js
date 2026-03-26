@@ -11,17 +11,23 @@ const {
   quickScan,
   printFindings,
 } = require('./lib/scanner');
-const { toJson, toSarif, toText } = require('./lib/reporter');
 const { writeInitConfig, loadConfig, parseCliOverrides } = require('./lib/config');
 const { badgeLine, injectBadge } = require('./lib/badge');
 
 const args = process.argv.slice(2);
-const isLocal   = args.includes('--local');
-const isClaude  = args.includes('--claude');
-const withHooks = args.includes('--with-hooks');
-const skipScan  = args.includes('--skip-scan');
-const scanOnly  = args.includes('--scan-only') || args.includes('--scan');
-const isServe   = args[0] === 'serve';
+const isLocal    = args.includes('--local');
+const isClaude   = args.includes('--claude');
+const withHooks  = args.includes('--with-hooks');
+const skipScan   = args.includes('--skip-scan');
+const isServe    = args[0] === 'serve';
+const isAI       = args.includes('--ai');
+const allowWrites = args.includes('--allow-writes');
+const isVerbose  = args.includes('--verbose');
+
+// --depth tier-1|tier-2|tier-3|tier-4  (output depth for --ai --json mode)
+// tier-4 also auto-enables --allow-writes
+const depthIdx = args.indexOf('--depth');
+const depth    = depthIdx !== -1 ? args[depthIdx + 1] : 'tier-1';
 
 // --json or --format json → structured JSON output
 // --format sarif          → SARIF 2.1.0 output
@@ -72,25 +78,30 @@ if (isServe) {
   return; // server stays alive — do not fall through to installer
 }
 
-// ─── Scan-only early exit ─────────────────────────────────────────────────────
+// ─── AI Audit mode early exit ─────────────────────────────────────────────────
+// tdd-audit --ai [--scan-only] [--json | --format sarif] [--allow-writes]
+//           [--provider anthropic] [--model claude-opus-4-6] [--api-key sk-...]
+//           [--base-url https://...] [--config .tdd-audit.json] [--verbose]
 
-if (scanOnly) {
-  if (outputFormat !== 'text') process.stdout.write('\n🔍 Scanning...\n');
-  else process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
-  const findings = quickScan(projectDir);
-  const exempted = findings.exempted || [];
-  if (outputFormat === 'json') {
-    process.stdout.write('\n');
-    console.log(JSON.stringify(toJson(findings, exempted), null, 2));
-  } else if (outputFormat === 'sarif') {
-    process.stdout.write('\n');
-    console.log(JSON.stringify(toSarif(findings, projectDir), null, 2));
-  } else {
-    process.stdout.write('\n');
-    printFindings(findings, exempted);
-  }
-  injectBadge(projectDir, badgeLine(findings, config.tdd_site));
-  process.exit(0);
+if (isAI) {
+  const { runAudit } = require('./lib/auditor');
+  runAudit({
+    projectDir,
+    packageDir: __dirname,
+    provider:   config.provider,
+    apiKey:     config.apiKey,
+    model:      config.model,
+    baseUrl:    config.baseUrl,
+    outputFormat,
+    depth,
+    // tier-4 auto-enables writes; explicit --allow-writes also works
+    allowWrites: allowWrites || depth === 'tier-4',
+    verbose:    isVerbose,
+  }).catch(err => {
+    console.error(`\n❌ AI Audit failed: ${err.message}`);
+    process.exit(1);
+  });
+  return;
 }
 
 // ─── Install Skill Files ──────────────────────────────────────────────────────

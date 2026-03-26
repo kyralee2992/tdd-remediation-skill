@@ -9,7 +9,6 @@
  * Coverage:
  *   buildApp()              — returns a Fastify instance with expected decorators
  *   GET  /health            — unauthenticated, version, security headers
- *   POST /scan              — path validation, JSON output, SARIF, bad input
  *   POST /remediate         — validation, 202 + jobId
  *   POST /audit             — 202 + Location header, no provider → scan-only
  *   GET  /jobs/:id          — pending / done / not found
@@ -109,82 +108,39 @@ describe('GET /health', () => {
 // ─── Authentication ────────────────────────────────────────────────────────────
 
 describe('Authentication', () => {
-  test('POST /scan returns 401 with wrong key', async () => {
+  test('POST /audit/ai returns 401 with wrong key', async () => {
     const app = keyedApp('correct');
     await app.ready();
     const res = await app.inject({
-      method: 'POST', url: '/scan',
+      method: 'POST', url: '/audit/ai',
       headers: { authorization: 'Bearer wrong' },
-      payload: { path: '.' },
+      payload: { provider: 'anthropic', apiKey: 'sk-test' },
     });
     expect(res.statusCode).toBe(401);
     await app.close();
   });
 
-  test('POST /scan succeeds with correct key', async () => {
+  test('POST /audit/ai returns 202 with correct key', async () => {
     const app = keyedApp('mykey');
     await app.ready();
     const res = await app.inject({
-      method: 'POST', url: '/scan',
+      method: 'POST', url: '/audit/ai',
       headers: { authorization: 'Bearer mykey' },
-      payload: { path: '.' },
+      payload: { provider: 'anthropic', apiKey: 'sk-test' },
     });
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(202);
     await app.close();
   });
 
-  test('open app (no key) allows POST /scan without auth header', async () => {
+  test('open app (no key) allows POST /audit/ai without auth header', async () => {
     const app = openApp();
     await app.ready();
-    const res = await app.inject({ method: 'POST', url: '/scan', payload: { path: '.' } });
-    expect(res.statusCode).toBe(200);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test' },
+    });
+    expect(res.statusCode).toBe(202);
     await app.close();
-  });
-});
-
-// ─── POST /scan ───────────────────────────────────────────────────────────────
-
-describe('POST /scan', () => {
-  let app;
-  beforeAll(async () => { app = openApp(); await app.ready(); });
-  afterAll(() => app.close());
-
-  test('scans cwd and returns findings array', async () => {
-    const res = await app.inject({ method: 'POST', url: '/scan', payload: { path: '.' } });
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(Array.isArray(body.findings)).toBe(true);
-  });
-
-  test('returns duration field', async () => {
-    const res = await app.inject({ method: 'POST', url: '/scan', payload: { path: '.' } });
-    const body = JSON.parse(res.body);
-    expect(typeof body.duration).toBe('number');
-  });
-
-  test('rejects path traversal with 400', async () => {
-    const res = await app.inject({
-      method: 'POST', url: '/scan',
-      payload: { path: '../../etc/passwd' },
-    });
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body).error).toMatch(/outside working directory/i);
-  });
-
-  test('returns SARIF when format=sarif', async () => {
-    const res = await app.inject({
-      method: 'POST', url: '/scan',
-      payload: { path: '.', format: 'sarif' },
-    });
-    expect(res.statusCode).toBe(200);
-    const body = JSON.parse(res.body);
-    expect(body.$schema).toMatch(/sarif/i);
-  });
-
-  test('returns 400 for missing path (defaults to cwd — no error)', async () => {
-    // No path → defaults to cwd, should succeed
-    const res = await app.inject({ method: 'POST', url: '/scan', payload: {} });
-    expect(res.statusCode).toBe(200);
   });
 });
 
@@ -621,5 +577,367 @@ describe('authenticate() — edge cases', () => {
     const { authenticate } = require('../../lib/plugin');
     // req.headers is undefined — should not throw
     expect(authenticate({}, { serverApiKey: 'secret' })).toBe(false);
+  });
+});
+
+// ─── POST /audit/ai — LLM-powered agentic audit ───────────────────────────────
+
+describe('POST /audit/ai', () => {
+  let app;
+  const origFetch = global.fetch;
+
+  // LLM mock: Anthropic returns a text block with a JSON report, then stops.
+  const AI_JSON = JSON.stringify({
+    stack: 'Node.js', findings: [], likelyFalsePositives: [], remediation: [],
+  });
+  const anthropicOk = {
+    ok:   true,
+    json: async () => ({
+      content:     [{ type: 'text', text: '```json\n' + AI_JSON + '\n```' }],
+      stop_reason: 'end_turn',
+    }),
+  };
+  const openaiOk = {
+    ok:   true,
+    json: async () => ({
+      choices: [{ message: { content: '```json\n' + AI_JSON + '\n```' }, finish_reason: 'stop' }],
+    }),
+  };
+
+  beforeAll(async () => { app = openApp(); await app.ready(); });
+  afterAll(async () => { await app.close(); global.fetch = origFetch; });
+
+  beforeEach(() => {
+    global.fetch = async (url) =>
+      url.includes('anthropic.com') ? anthropicOk : openaiOk;
+  });
+
+  test('returns 400 when both provider and apiKey are missing', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: {},
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/provider.*apiKey|apiKey.*provider/i);
+  });
+
+  test('returns 400 when provider is missing', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { apiKey: 'sk-test' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test('returns 400 when apiKey is missing', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
+  test('returns 202 with jobId when provider and apiKey are supplied', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test' },
+    });
+    expect(res.statusCode).toBe(202);
+    const body = JSON.parse(res.body);
+    expect(body.jobId).toBeTruthy();
+  });
+
+  test('returns Location header pointing to /jobs/:id', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test' },
+    });
+    const { jobId } = JSON.parse(res.body);
+    expect(res.headers['location']).toBe(`/jobs/${jobId}`);
+  });
+
+  test('returns Retry-After: 5 header', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test' },
+    });
+    expect(res.headers['retry-after']).toBe('5');
+  });
+
+  test('returns 400 for path traversal', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', path: '../../etc/passwd' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body).error).toMatch(/outside working directory/i);
+  });
+
+  test('job transitions to done with result after async pipeline completes', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', scanOnly: true },
+    });
+    const { jobId } = JSON.parse(res.body);
+
+    // Wait for setImmediate + LLM round-trip to complete
+    await new Promise(r => setTimeout(r, 300));
+
+    const jobRes = await app.inject({ method: 'GET', url: `/jobs/${jobId}` });
+    const job = JSON.parse(jobRes.body);
+    expect(job.status).toBe('done');
+    expect(job.result).toBeDefined();
+  });
+
+  test('job result contains findings array when done', async () => {
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', scanOnly: true },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const jobRes = await app.inject({ method: 'GET', url: `/jobs/${jobId}` });
+    const job = JSON.parse(jobRes.body);
+    expect(Array.isArray(job.result?.findings)).toBe(true);
+  });
+
+  test('uses openai provider when specified', async () => {
+    let openaiCalled = false;
+    global.fetch = async (url) => {
+      if (url.includes('openai.com')) openaiCalled = true;
+      return openaiOk;
+    };
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'openai', apiKey: 'sk-test', scanOnly: true },
+    });
+    await new Promise(r => setTimeout(r, 300));
+    expect(res.statusCode).toBe(202);
+    expect(openaiCalled).toBe(true);
+  });
+
+  test('job transitions to error when provider returns non-ok', async () => {
+    global.fetch = async () => ({ ok: false, status: 401, text: async () => 'Unauthorized' });
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'bad-key', scanOnly: true },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const jobRes = await app.inject({ method: 'GET', url: `/jobs/${jobId}` });
+    const job = JSON.parse(jobRes.body);
+    expect(job.status).toBe('error');
+    expect(job.error).toBeDefined();
+  });
+
+  test('falls back to cfg values for provider/apiKey when not in body', async () => {
+    // Build an app with cfg.provider and cfg.apiKey pre-configured
+    let fetchCalled = false;
+    global.fetch = async (url) => {
+      fetchCalled = true;
+      return url.includes('anthropic.com') ? anthropicOk : openaiOk;
+    };
+
+    const cfgApp = buildApp({
+      serverApiKey: null, trustProxy: false, output: 'json',
+      provider: 'anthropic', apiKey: 'cfg-key', model: null, baseUrl: null,
+    });
+    await cfgApp.ready();
+
+    const res = await cfgApp.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { scanOnly: true }, // no provider or apiKey in body
+    });
+    await new Promise(r => setTimeout(r, 300));
+    expect(res.statusCode).toBe(202);
+    expect(fetchCalled).toBe(true);
+    await cfgApp.close();
+  });
+});
+
+// ─── POST /audit/ai — depth tiers in plugin mode ──────────────────────────────
+
+describe('POST /audit/ai — depth tier support in plugin mode', () => {
+  const AI_JSON_TIER1 = JSON.stringify({ stack: 'Node.js', findings: [], likelyFalsePositives: [], remediation: [] });
+  const AI_JSON_TIER2 = JSON.stringify({
+    stack: 'Node.js',
+    findings: [{ name: 'XSS', severity: 'HIGH', file: 'a.js', line: 1, snippet: 'x', risk: 'r', effort: 'low', cwe: 'CWE-79', owasp: 'A03', references: [] }],
+    likelyFalsePositives: [], remediation: [],
+  });
+  const AI_JSON_TIER3 = JSON.stringify({
+    stack: 'Node.js',
+    findings: [{ name: 'XSS', severity: 'HIGH', file: 'a.js', line: 1, snippet: 'x', risk: 'r', effort: 'low', cwe: 'CWE-79', patch: 'sanitize(x)', testSnippet: "test('xss', ()=>{})" }],
+    likelyFalsePositives: [], remediation: [],
+  });
+  const AI_JSON_TIER4 = JSON.stringify({
+    stack: 'Node.js',
+    findings: [
+      { name: 'SQL Injection', severity: 'CRITICAL', file: 'db.js', line: 5, snippet: 'query(input)', risk: 'exfil', effort: 'low', cwe: 'CWE-89', patch: 'db.prepare(...)' },
+      { name: 'XSS',          severity: 'HIGH',     file: 'view.js', line: 2, snippet: 'innerHTML=x',  risk: 'xss',   effort: 'low', cwe: 'CWE-79', patch: 'textContent=x'  },
+    ],
+    likelyFalsePositives: [],
+    remediation: [
+      { name: 'SQL Injection', status: 'fixed',   testFile: 'test/sql.test.js', fixApplied: 'parameterized query' },
+      { name: 'XSS',          status: 'skipped', testFile: null,               fixApplied: 'requires manual review' },
+    ],
+  });
+
+  function mockFetchWith(jsonStr) {
+    global.fetch = async () => ({
+      ok:   true,
+      json: async () => ({
+        content:     [{ type: 'text', text: '```json\n' + jsonStr + '\n```' }],
+        stop_reason: 'end_turn',
+      }),
+    });
+  }
+
+  let app;
+  const origFetch = global.fetch;
+  beforeAll(async () => { app = openApp(); await app.ready(); });
+  afterAll(async () => { await app.close(); global.fetch = origFetch; });
+
+  test('default depth is tier-1 when not specified in body', async () => {
+    mockFetchWith(AI_JSON_TIER1);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', scanOnly: true },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.status).toBe('done');
+    expect(job.result.depth).toBe('tier-1');
+  });
+
+  test('depth=tier-2 appears in result envelope with rich fields', async () => {
+    mockFetchWith(AI_JSON_TIER2);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', depth: 'tier-2' },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.status).toBe('done');
+    expect(job.result.depth).toBe('tier-2');
+    expect(job.result.findings[0].cwe).toBe('CWE-79');
+    expect(job.result.findings[0].owasp).toBe('A03');
+  });
+
+  test('depth=tier-3 result envelope has patch and testSnippet fields', async () => {
+    mockFetchWith(AI_JSON_TIER3);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', depth: 'tier-3' },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.status).toBe('done');
+    expect(job.result.depth).toBe('tier-3');
+    expect(job.result.findings[0].patch).toBe('sanitize(x)');
+    expect(job.result.findings[0].testSnippet).toContain('xss');
+  });
+
+  test('depth is recorded in running job state immediately after POST', async () => {
+    mockFetchWith(AI_JSON_TIER1);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', depth: 'tier-2' },
+    });
+    expect(res.statusCode).toBe(202);
+    const { jobId } = JSON.parse(res.body);
+
+    const earlyJob = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(earlyJob.depth).toBe('tier-2');
+  });
+
+  test('depth=tier-4 result envelope shows tier-4', async () => {
+    mockFetchWith(AI_JSON_TIER3);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', depth: 'tier-4' },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.status).toBe('done');
+    expect(job.result.depth).toBe('tier-4');
+  });
+
+  test('tier-4 result includes patchesApplied as the billable unit', async () => {
+    mockFetchWith(AI_JSON_TIER4);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', depth: 'tier-4' },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.status).toBe('done');
+    expect(job.result.depth).toBe('tier-4');
+    // 1 fixed + 1 skipped → patchesApplied = 1
+    expect(job.result.patchesApplied).toBe(1);
+    expect(job.result.remediation).toHaveLength(2);
+  });
+
+  test('tier-3 result has patchesApplied=0 (patches are copy-only, not applied)', async () => {
+    mockFetchWith(AI_JSON_TIER3);
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: { provider: 'anthropic', apiKey: 'sk-test', depth: 'tier-3' },
+    });
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.result.patchesApplied).toBe(0);
+    // Patch content is still present in findings for manual application
+    expect(job.result.findings[0].patch).toBe('sanitize(x)');
+  });
+
+  test('targeted-apply: depth=tier-4 + findings array is accepted and job completes', async () => {
+    mockFetchWith(AI_JSON_TIER4);
+    const preIdentified = [
+      { name: 'SQL Injection', file: 'src/db.js', line: 10, patch: 'db.prepare(...)' },
+    ];
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: {
+        provider: 'anthropic', apiKey: 'sk-test',
+        depth: 'tier-4', findings: preIdentified,
+      },
+    });
+    expect(res.statusCode).toBe(202);
+    const { jobId } = JSON.parse(res.body);
+    await new Promise(r => setTimeout(r, 300));
+
+    const job = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(job.status).toBe('done');
+    expect(job.result.depth).toBe('tier-4');
+  });
+
+  test('targeted-apply: depth recorded immediately in pending state', async () => {
+    mockFetchWith(AI_JSON_TIER4);
+    const preIdentified = [{ name: 'XSS', file: 'src/view.js', line: 5, patch: 'escape(x)' }];
+    const res = await app.inject({
+      method: 'POST', url: '/audit/ai',
+      payload: {
+        provider: 'anthropic', apiKey: 'sk-test',
+        depth: 'tier-4', findings: preIdentified,
+      },
+    });
+    const { jobId } = JSON.parse(res.body);
+
+    const earlyJob = JSON.parse((await app.inject({ method: 'GET', url: `/jobs/${jobId}` })).body);
+    expect(earlyJob.depth).toBe('tier-4');
   });
 });

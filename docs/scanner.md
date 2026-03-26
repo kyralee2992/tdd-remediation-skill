@@ -1,10 +1,12 @@
 # Scanner Architecture
 
-`lib/scanner.js` is the core engine behind `npx @lhi/tdd-audit --scan` and the auto-audit skill. It is a pure Node.js module with no runtime dependencies — only `fs` and `path`.
+`lib/scanner.js` provides the static vulnerability pattern engine used internally by the tdd-audit skill and the `POST /audit` pipeline. It is a pure Node.js module with no runtime dependencies — only `fs` and `path`.
+
+> The scanner is an internal pre-processing component, not a standalone product. Customer-facing output is produced by the LLM audit (`--ai` / `POST /audit/ai`), which uses the scanner's signal as one input alongside its own tool-use exploration.
 
 ---
 
-## Entry points
+## Exports
 
 | Export | Purpose |
 |---|---|
@@ -64,7 +66,7 @@ Same skip rules, yields `.md` files only. Used by `scanPromptFiles`.
 
 `.js` `.ts` `.jsx` `.tsx` `.mjs` `.py` `.go` `.dart` `.yml` `.yaml`
 
-JSON and XML files are not walked by the code scanner. `package.json` is handled by `scanPackageJson()` and `.env*` files by `scanEnvFiles()` — both run as separate targeted checks. CI workflow files (`.yml`/`.yaml`) **are** now scanned by `walkFiles()` for GitHub Actions expression injection and similar patterns.
+JSON and XML files are not walked by the code scanner. `package.json` is handled by `scanPackageJson()` and `.env*` files by `scanEnvFiles()` — both run as separate targeted checks. CI workflow files (`.yml`/`.yaml`) **are** scanned by `walkFiles()` for GitHub Actions expression injection and similar patterns.
 
 ---
 

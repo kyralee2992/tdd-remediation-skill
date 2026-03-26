@@ -1,6 +1,31 @@
 # AI Remediation
 
-Pass a provider and API key to have tdd-audit autonomously generate exploit tests, patches, and regression checks for each finding — no agent required.
+`tdd-audit --ai` runs a fully agentic LLM audit: the model explores your codebase with tool calls, identifies vulnerabilities, and (depending on the depth tier) provides copy-ready patches or applies them directly. No agent shell required.
+
+---
+
+## Depth tiers
+
+| Tier | What you get | Writes files? | Billing unit |
+|---|---|---|---|
+| `tier-1` | Scan report: name, severity, file, line, snippet | no | per report |
+| `tier-2` | + risk, effort, CWE, OWASP category, references | no | per report |
+| `tier-3` | + copy-ready `patch` and `testSnippet` per finding | no | per report |
+| `tier-4` | LLM applies patches via `write_file`; `patchesApplied` count in envelope | yes | per applied patch |
+
+```bash
+# Fast scan report
+npx @lhi/tdd-audit --ai --depth tier-1 --format json
+
+# Rich report with CWE/OWASP — review and decide what to fix
+npx @lhi/tdd-audit --ai --depth tier-2 --format json
+
+# Patch included in every finding — copy and apply yourself
+npx @lhi/tdd-audit --ai --depth tier-3 --format json
+
+# Let the LLM write the fixes
+npx @lhi/tdd-audit --ai --depth tier-4
+```
 
 ---
 
@@ -25,13 +50,13 @@ Edit `.tdd-audit.json`:
 `apiKeyEnv` names the environment variable to read the key from — no key ever touches disk. Then just:
 
 ```bash
-npx @lhi/tdd-audit serve
+npx @lhi/tdd-audit --ai --depth tier-2 --format json
 ```
 
 Point to a config at any path:
 
 ```bash
-npx @lhi/tdd-audit serve --config ~/configs/my-audit.json
+npx @lhi/tdd-audit --ai --config ~/configs/my-audit.json --depth tier-3
 ```
 
 ---
@@ -40,15 +65,17 @@ npx @lhi/tdd-audit serve --config ~/configs/my-audit.json
 
 ```bash
 # Anthropic
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider anthropic \
-  --api-key $ANTHROPIC_API_KEY
+  --api-key $ANTHROPIC_API_KEY \
+  --depth tier-2
 
 # OpenAI
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider openai \
   --api-key $OPENAI_API_KEY \
-  --model gpt-4o-mini
+  --model gpt-4o-mini \
+  --depth tier-1
 ```
 
 ---
@@ -60,28 +87,28 @@ The API key is sent in the `Authorization: Bearer` header — never in the URL.
 
 ```bash
 # Groq (fast inference)
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider openai \
   --base-url https://api.groq.com/openai/v1 \
   --model llama-3.3-70b-versatile \
   --api-key $GROQ_API_KEY
 
 # OpenRouter (access 200+ models)
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider openai \
   --base-url https://openrouter.ai/api/v1 \
   --model meta-llama/llama-3.3-70b-instruct \
   --api-key $OPENROUTER_API_KEY
 
 # Together AI
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider openai \
   --base-url https://api.together.xyz/v1 \
   --model mistralai/Mixtral-8x7B-Instruct-v0.1 \
   --api-key $TOGETHER_API_KEY
 
 # LM Studio / vLLM / llama.cpp (fully local)
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider openai \
   --base-url http://localhost:1234/v1 \
   --model local-model
@@ -116,53 +143,95 @@ In `.tdd-audit.json`:
 ## REST API usage
 
 ```bash
-# 1. Scan and get findings
-FINDINGS=$(curl -s -X POST http://localhost:3000/scan \
-  -H "Authorization: Bearer $SERVER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"path": "."}' | jq '.findings')
+# Start the server
+npx @lhi/tdd-audit serve --port 3000 --api-key $SERVER_KEY
 
-# 2. Submit remediation job (using Groq via --base-url)
-JOB=$(curl -s -X POST http://localhost:3000/remediate \
+# Launch a tier-2 audit job
+JOB=$(curl -s -X POST http://localhost:3000/audit/ai \
   -H "Authorization: Bearer $SERVER_KEY" \
   -H "Content-Type: application/json" \
   -d "{
-    \"findings\": $FINDINGS,
     \"provider\": \"openai\",
-    \"apiKey\": \"$GROQ_API_KEY\",
-    \"baseUrl\": \"https://api.groq.com/openai/v1\",
-    \"model\": \"llama-3.3-70b-versatile\",
-    \"severity\": \"HIGH\"
-  }")
+    \"apiKey\":   \"$GROQ_API_KEY\",
+    \"baseUrl\":  \"https://api.groq.com/openai/v1\",
+    \"model\":    \"llama-3.3-70b-versatile\",
+    \"depth\":    \"tier-2\"
+  }" | jq -r '.jobId')
 
-JOB_ID=$(echo $JOB | jq -r '.jobId')
+# Poll until done
+while true; do
+  STATUS=$(curl -s http://localhost:3000/jobs/$JOB \
+    -H "Authorization: Bearer $SERVER_KEY" | jq -r '.status')
+  [ "$STATUS" = "done" ] || [ "$STATUS" = "error" ] && break
+  sleep 3
+done
 
-# 3. Poll for results
-curl -s "http://localhost:3000/jobs/$JOB_ID" \
-  -H "Authorization: Bearer $SERVER_KEY" | jq '.status'
+# Print summary
+curl -s http://localhost:3000/jobs/$JOB \
+  -H "Authorization: Bearer $SERVER_KEY" | jq '.result.summary'
 ```
+
+### Targeted apply (tier-4)
+
+Take a single finding from a tier-3 report and apply its patch without re-scanning:
+
+```bash
+# Get the first finding from a previous tier-3 job
+FINDING=$(curl -s http://localhost:3000/jobs/$TIER3_JOB_ID \
+  -H "Authorization: Bearer $SERVER_KEY" \
+  | jq '.result.findings[0]')
+
+# Apply only that patch
+curl -s -X POST http://localhost:3000/audit/ai \
+  -H "Authorization: Bearer $SERVER_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"provider\": \"anthropic\",
+    \"apiKey\":   \"$ANTHROPIC_API_KEY\",
+    \"depth\":    \"tier-4\",
+    \"findings\": [$FINDING]
+  }" | jq '.jobId'
+```
+
+See [REST API](rest-api.md) for the full endpoint reference.
 
 ---
 
-## What the model returns
+## Output envelope
 
-For each finding the remediator sends a structured prompt and expects back:
+All structured output (`--format json` or via REST API) returns the same envelope shape regardless of tier:
 
 ```json
 {
-  "exploitTest": {
-    "filename": "__tests__/security/xss-comments.test.js",
-    "content": "..."
-  },
-  "patch": {
-    "filename": "src/routes/comments.js",
-    "diff": "--- a/src/routes/comments.js\n+++ ..."
-  },
-  "refactorChecks": ["npm test", "npm run test:security"]
+  "version":             "1.17.0",
+  "provider":            "anthropic",
+  "model":               "claude-opus-4-6",
+  "depth":               "tier-3",
+  "mode":                "full",
+  "stack":               "Node.js / Express",
+  "summary":             { "CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 0 },
+  "patchesApplied":      0,
+  "findings": [
+    {
+      "name":        "SQL Injection",
+      "severity":    "HIGH",
+      "file":        "src/db.js",
+      "line":        42,
+      "snippet":     "db.query(userInput)",
+      "risk":        "Full database read/write via UNION injection",
+      "effort":      "low",
+      "cwe":         "CWE-89",
+      "patch":       "const stmt = db.prepare('SELECT ...');\nstmt.run(id);",
+      "testSnippet": "test('prevents injection', () => { ... });"
+    }
+  ],
+  "likelyFalsePositives": [],
+  "remediation":          [],
+  "scannedAt":            "2026-03-26T12:00:00.000Z"
 }
 ```
 
-The result is returned as-is from the API — review and apply patches manually or pipe into your own automation.
+`patchesApplied` is always `0` for tiers 1–3 (no files written). For tier-4 it counts `remediation` entries where `status === "fixed"` — the billable unit.
 
 ---
 
@@ -174,9 +243,12 @@ ollama pull codellama
 ollama serve
 
 # Run tdd-audit against it
-npx @lhi/tdd-audit serve \
+npx @lhi/tdd-audit --ai \
   --provider ollama \
-  --model codellama
+  --model codellama \
+  --depth tier-1
 ```
 
 No API key required. Ollama must be running on `http://localhost:11434`.
+
+Ollama does not support the tool-use API, so the audit runs in single-shot mode: the project files are bundled into the prompt rather than explored interactively with tool calls. For best results, use `tier-1` or `tier-2` with Ollama.
