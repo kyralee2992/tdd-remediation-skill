@@ -197,7 +197,7 @@ Security tests cover prompt injection, path traversal, rate limiting, timing-saf
 |---|---|
 | [REST API](docs/rest-api.md) | Endpoints, auth, rate limiting, depth tiers, targeted apply |
 | [AI Remediation](docs/ai-remediation.md) | Provider setup, `--base-url` for compatible APIs, config file |
-| [Vulnerability Patterns](docs/vulnerability-patterns.md) | All 57 patterns — descriptions, grep signatures, fix pointers |
+| [Vulnerability Patterns](docs/vulnerability-patterns.md) | All 79 patterns — descriptions, grep signatures, fix pointers |
 | [TDD Protocol](docs/tdd-protocol.md) | Red-Green-Refactor in full, with framework templates for all 6 stacks |
 | [Agentic AI Security](docs/agentic-ai-security.md) | ASI01–ASI10 — prompt injection, MCP supply chain, Actions injection |
 | [Hardening](docs/hardening.md) | Phase 4 controls — Helmet, CSP, CSRF, rate limiting, gitleaks, SRI |
