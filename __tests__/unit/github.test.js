@@ -164,3 +164,33 @@ describe('ghFetch — res.text() failure catch branch', () => {
     })).rejects.toThrow(/503/);
   });
 });
+
+// ─── ghFetch — body=null branch (line 15) ────────────────────────────────────
+
+describe('ghFetch — body=null / GET path (line 15 false branch)', () => {
+  const { ghFetch } = require('../../lib/github');
+  beforeEach(() => { global.fetch = jest.fn(); });
+  afterEach(() => { delete global.fetch; });
+
+  test('does not set opts.body when body argument is null (default GET call)', async () => {
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ id: 42 }) });
+    await ghFetch('/repos/acme/app', 'ghp_token', 'GET', null);
+    const init = global.fetch.mock.calls[0][1];
+    expect(init.body).toBeUndefined();
+  });
+
+  test('sets opts.body when body argument is provided (POST call)', async () => {
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await ghFetch('/repos/acme/app/issues', 'ghp_token', 'POST', { title: 'test' });
+    const init = global.fetch.mock.calls[0][1];
+    expect(init.body).toBeDefined();
+    expect(JSON.parse(init.body).title).toBe('test');
+  });
+
+  test('uses default method GET when method argument is omitted', async () => {
+    global.fetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    await ghFetch('/repos/acme/app', 'tok');
+    const init = global.fetch.mock.calls[0][1];
+    expect(init.method).toBe('GET');
+  });
+});

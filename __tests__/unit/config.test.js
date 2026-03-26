@@ -32,6 +32,31 @@ describe('DEFAULTS', () => {
 
   test('default port is 3000', () => expect(DEFAULTS.port).toBe(3000));
   test('trustProxy is false by default', () => expect(DEFAULTS.trustProxy).toBe(false));
+
+  test('security_name defaults to null', () => {
+    expect(DEFAULTS.security_name).toBeNull();
+  });
+
+  test('security_email defaults to null', () => {
+    expect(DEFAULTS.security_email).toBeNull();
+  });
+
+  test('platform expansion fields have correct defaults', () => {
+    expect(DEFAULTS.severity_overrides).toEqual({});
+    expect(DEFAULTS.webhook_url).toBeNull();
+    expect(DEFAULTS.slack_webhook).toBeNull();
+    expect(DEFAULTS.slack_channel).toBeNull();
+    expect(DEFAULTS.open_pr).toBe(false);
+    expect(DEFAULTS.github_token).toBeNull();
+    expect(DEFAULTS.github_repo).toBeNull();
+    expect(DEFAULTS.schedule).toBeNull();
+    expect(DEFAULTS.pr_mode).toBe(false);
+    expect(DEFAULTS.org_scan).toBeNull();
+    expect(DEFAULTS.sbom).toBe(false);
+    expect(DEFAULTS.report).toBe(false);
+    expect(DEFAULTS.watch).toBe(false);
+    expect(DEFAULTS.rotate_secrets).toBe(false);
+  });
 });
 
 // ── loadConfig ────────────────────────────────────────────────────────────────
@@ -88,6 +113,68 @@ describe('loadConfig — with config file', () => {
     fs.writeFileSync(path.join(tmpDir, CONFIG_FILE), '{ bad json }');
     const cfg = loadConfig(tmpDir);
     expect(cfg.port).toBe(3000); // falls back to DEFAULTS
+  });
+
+  test('loads severity_overrides from file', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, CONFIG_FILE),
+      JSON.stringify({ severity_overrides: { 'CORS Wildcard': 'CRITICAL' } }),
+    );
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.severity_overrides).toEqual({ 'CORS Wildcard': 'CRITICAL' });
+  });
+
+  test('loads notification settings from file', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, CONFIG_FILE),
+      JSON.stringify({ webhook_url: 'https://hooks.example.com/tdd', slack_webhook: 'https://hooks.slack.com/x', slack_channel: '#security' }),
+    );
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.webhook_url).toBe('https://hooks.example.com/tdd');
+    expect(cfg.slack_webhook).toBe('https://hooks.slack.com/x');
+    expect(cfg.slack_channel).toBe('#security');
+  });
+
+  test('loads workflow integration settings from file', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, CONFIG_FILE),
+      JSON.stringify({ open_pr: true, github_repo: 'owner/repo' }),
+    );
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.open_pr).toBe(true);
+    expect(cfg.github_repo).toBe('owner/repo');
+  });
+
+  test('loads CI/scheduled mode settings from file', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, CONFIG_FILE),
+      JSON.stringify({ pr_mode: true, org_scan: 'my-org', schedule: '0 2 * * *' }),
+    );
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.pr_mode).toBe(true);
+    expect(cfg.org_scan).toBe('my-org');
+    expect(cfg.schedule).toBe('0 2 * * *');
+  });
+
+  test('loads output addition settings from file', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, CONFIG_FILE),
+      JSON.stringify({ sbom: true, report: true, watch: true, rotate_secrets: true }),
+    );
+    const cfg = loadConfig(tmpDir);
+    expect(cfg.sbom).toBe(true);
+    expect(cfg.report).toBe(true);
+    expect(cfg.watch).toBe(true);
+    expect(cfg.rotate_secrets).toBe(true);
+  });
+
+  test('CLI overrides win over file-based severity_overrides', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, CONFIG_FILE),
+      JSON.stringify({ severity_overrides: { 'CORS Wildcard': 'HIGH' } }),
+    );
+    const cfg = loadConfig(tmpDir, { severity_overrides: { 'CORS Wildcard': 'CRITICAL' } });
+    expect(cfg.severity_overrides['CORS Wildcard']).toBe('CRITICAL');
   });
 });
 
@@ -182,6 +269,42 @@ describe('parseCliOverrides', () => {
   test('returns empty object for unknown flags', () => {
     const overrides = parseCliOverrides(['--unknown', 'value']);
     expect(Object.keys(overrides).length).toBe(0);
+  });
+
+  test('--pr sets pr_mode to true', () => {
+    expect(parseCliOverrides(['--pr']).pr_mode).toBe(true);
+  });
+
+  test('--org sets org_scan', () => {
+    expect(parseCliOverrides(['--org', 'my-github-org']).org_scan).toBe('my-github-org');
+  });
+
+  test('--open-pr sets open_pr to true', () => {
+    expect(parseCliOverrides(['--open-pr']).open_pr).toBe(true);
+  });
+
+  test('--sbom sets sbom to true', () => {
+    expect(parseCliOverrides(['--sbom']).sbom).toBe(true);
+  });
+
+  test('--watch sets watch to true', () => {
+    expect(parseCliOverrides(['--watch']).watch).toBe(true);
+  });
+
+  test('--report sets report to true', () => {
+    expect(parseCliOverrides(['--report']).report).toBe(true);
+  });
+
+  test('--rotate-secrets sets rotate_secrets to true', () => {
+    expect(parseCliOverrides(['--rotate-secrets']).rotate_secrets).toBe(true);
+  });
+
+  test('--threshold sets severityThreshold', () => {
+    expect(parseCliOverrides(['--threshold', 'HIGH']).severityThreshold).toBe('HIGH');
+  });
+
+  test('--format report sets output to report', () => {
+    expect(parseCliOverrides(['--format', 'report']).output).toBe('report');
   });
 });
 

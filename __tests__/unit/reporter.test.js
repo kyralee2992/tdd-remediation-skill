@@ -61,6 +61,43 @@ describe('toJson', () => {
   });
 });
 
+// ── toJson — security_name / security_email ───────────────────────────────────
+
+describe('toJson — security contact fields', () => {
+  test('includes security_name when set in config', () => {
+    const out = toJson([REAL], [], { security_name: 'Alice Smith' });
+    expect(out.security_name).toBe('Alice Smith');
+  });
+
+  test('includes security_email when set in config', () => {
+    const out = toJson([REAL], [], { security_email: 'security@example.com' });
+    expect(out.security_email).toBe('security@example.com');
+  });
+
+  test('includes both when both are set', () => {
+    const out = toJson([REAL], [], { security_name: 'Alice', security_email: 'alice@example.com' });
+    expect(out.security_name).toBe('Alice');
+    expect(out.security_email).toBe('alice@example.com');
+  });
+
+  test('omits security_name when not set', () => {
+    const out = toJson([REAL], [], {});
+    expect(out).not.toHaveProperty('security_name');
+  });
+
+  test('omits security_email when not set', () => {
+    const out = toJson([REAL], [], {});
+    expect(out).not.toHaveProperty('security_email');
+  });
+
+  test('backwards-compatible: existing callers without config arg still work', () => {
+    const out = toJson([REAL]);
+    expect(out.summary).toBeDefined();
+    expect(out).not.toHaveProperty('security_name');
+    expect(out).not.toHaveProperty('security_email');
+  });
+});
+
 // ── toSarif ───────────────────────────────────────────────────────────────────
 
 describe('toSarif', () => {
@@ -115,6 +152,26 @@ describe('toSarif', () => {
   test('empty findings returns empty results array', () => {
     expect(toSarif([]).runs[0].results).toHaveLength(0);
   });
+
+  test('uses tdd_site as informationUri when config.tdd_site is set', () => {
+    const sarif = toSarif([], '', { tdd_site: 'https://security.example.com' });
+    expect(sarif.runs[0].tool.driver.informationUri).toBe('https://security.example.com');
+  });
+
+  test('falls back to npm URL when config.tdd_site is absent', () => {
+    const sarif = toSarif([], '', {});
+    expect(sarif.runs[0].tool.driver.informationUri).toContain('npmjs.com');
+  });
+
+  test('trims whitespace from tdd_site before use', () => {
+    const sarif = toSarif([], '', { tdd_site: '  https://security.example.com  ' });
+    expect(sarif.runs[0].tool.driver.informationUri).toBe('https://security.example.com');
+  });
+
+  test('uses badge_label as driver name when set', () => {
+    const sarif = toSarif([], '', { badge_label: 'dc-audit' });
+    expect(sarif.runs[0].tool.driver.name).toBe('dc-audit');
+  });
 });
 
 // ── toText ────────────────────────────────────────────────────────────────────
@@ -160,6 +217,30 @@ describe('toText', () => {
     const odd = { ...REAL, severity: 'UNKNOWN' };
     expect(() => toText([odd])).not.toThrow();
     expect(toText([odd])).toMatch(/XSS/);
+  });
+});
+
+// ── [SEC] tdd_site URL scheme injection — reporter.js (SARIF informationUri) ──
+
+describe('[SEC] tdd_site URL scheme injection — reporter.js SARIF', () => {
+  const NPM_URL = 'https://www.npmjs.com/package/@lhi/tdd-audit';
+
+  test('[SEC] javascript: URL in tdd_site is not used as SARIF informationUri', () => {
+    const sarif = toSarif([], '', { tdd_site: 'javascript:alert(1)' });
+    expect(sarif.runs[0].tool.driver.informationUri).not.toContain('javascript:');
+    expect(sarif.runs[0].tool.driver.informationUri).toContain(NPM_URL);
+  });
+
+  test('[SEC] data: URL in tdd_site is rejected from SARIF informationUri', () => {
+    const sarif = toSarif([], '', { tdd_site: 'data:text/html,<script>xss</script>' });
+    expect(sarif.runs[0].tool.driver.informationUri).not.toContain('data:');
+    expect(sarif.runs[0].tool.driver.informationUri).toContain(NPM_URL);
+  });
+
+  test('[SEC] file: URL in tdd_site is rejected from SARIF informationUri', () => {
+    const sarif = toSarif([], '', { tdd_site: 'file:///etc/passwd' });
+    expect(sarif.runs[0].tool.driver.informationUri).not.toContain('file:');
+    expect(sarif.runs[0].tool.driver.informationUri).toContain(NPM_URL);
   });
 });
 

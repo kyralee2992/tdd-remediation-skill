@@ -543,7 +543,7 @@ describe('loadSkillSuite()', () => {
     expect(suite['auto-audit.md']).toBeDefined();
   });
 
-  test('loads all 6 skill files', () => {
+  test('loads all skill files including AI, Node, and test-patterns companions', () => {
     const suite = loadSkillSuite(PACKAGE_DIR);
     const keys = Object.keys(suite);
     expect(keys).toContain('SKILL.md');
@@ -552,6 +552,9 @@ describe('loadSkillSuite()', () => {
     expect(keys).toContain('green-phase.md');
     expect(keys).toContain('refactor-phase.md');
     expect(keys).toContain('hardening-phase.md');
+    expect(keys).toContain('ai-security.md');
+    expect(keys).toContain('node-advanced-security.md');
+    expect(keys).toContain('security-test-patterns.md');
   });
 
   test('silently skips missing files when packageDir has no prompts', () => {

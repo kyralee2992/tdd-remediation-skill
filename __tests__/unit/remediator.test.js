@@ -411,3 +411,31 @@ describe('remediate() — unknown severity ?? 99 in filter', () => {
     expect(results[0].finding.name).toBe('XSS');
   });
 });
+
+// ─── callProvider — function-URL provider branch (line 136) ──────────────────
+
+describe('callProvider — function-URL provider (line 136 true branch)', () => {
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ text: 'fixed' }),
+    });
+  });
+  afterEach(() => {
+    delete global.fetch;
+    delete PROVIDERS._testfunc;
+  });
+
+  test('calls provider URL when url is a function (covers typeof p.url === "function" branch)', async () => {
+    // Temporarily add a provider whose url field is a function (defensive code path)
+    PROVIDERS._testfunc = {
+      url:     (apiKey) => `https://testprovider.example.com/v1/gen?key=${apiKey}`,
+      headers: () => ({ 'Content-Type': 'application/json' }),
+      body:    (model, prompt) => ({ prompt }),
+      extract: (data) => data?.text || '',
+    };
+    await callProvider('_testfunc', 'mykey', 'mymodel', 'hello');
+    const calledUrl = global.fetch.mock.calls[0][0];
+    expect(calledUrl).toBe('https://testprovider.example.com/v1/gen?key=mykey');
+  });
+});

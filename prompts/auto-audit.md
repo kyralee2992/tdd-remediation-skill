@@ -19,13 +19,124 @@ If the user passes `--scan` or `--scan-only`, requests "audit only", or asks for
 
 ---
 
+## PR Mode (`--pr`)
+
+Lightweight, fast path designed for CI PR gates. When invoked with `--pr`:
+
+1. Run Phase 0 static scan only (no AI agents, no RAG queries, no code changes).
+2. Filter findings against `severityThreshold` (default `HIGH`).
+3. Apply any `severity_overrides` from `.tdd-audit.json` before filtering.
+4. If any finding meets or exceeds the threshold: exit non-zero with a summary. Otherwise exit zero.
+
+Output format in PR mode:
+```
+tdd-audit PR scan — my-project
+✅ 0 CRITICAL · 0 HIGH (threshold: HIGH) — passed
+```
+or:
+```
+tdd-audit PR scan — my-project
+❌ 1 CRITICAL · 2 HIGH (threshold: HIGH) — blocked
+  CRITICAL  src/api/admin.js:14  Unguarded admin endpoint
+  HIGH      src/lib/auth.js:88   JWT algorithm confusion
+```
+
+Do not start MCP services, pull pattern repos, or run agents in this mode. Speed is the goal.
+
+---
+
+## Org Scan Mode (`--org <github-org>`)
+
+Scans all repos in a GitHub org. When invoked with `--org`:
+
+1. List all repos in `<github-org>` via `gh repo list <github-org> --limit 200 --json name,sshUrl`.
+2. For each repo: clone to a temp dir (or pull if already present), run `--pr` mode against it.
+3. Collect results and produce a cross-org summary:
+
+```
+<github-org> security posture — YYYY-MM-DD
+
+✅ repo-a     0 critical · 0 high
+⚠️  repo-b     0 critical · 2 high
+🔴 repo-c     1 critical · 4 high
+
+N repos scanned · X critical · Y high total
+```
+
+4. If `webhook_url` or `slack_webhook` is configured, fire the notification with the aggregate payload.
+5. If `--format report` is also passed, write a full markdown cross-org report.
+
+Requires `GITHUB_TOKEN` in the environment with `repo` read scope.
+
+---
+
+## Auto-Fix PR Mode (`--open-pr`)
+
+Instead of committing fixes directly to the working branch, open a GitHub PR per confirmed finding. Apply this mode during Phase 1–3 (Remediation Engine):
+
+For each finding:
+1. Create a branch: `tdd-audit/<finding-slug>-<YYYYMMDD>` off the default branch.
+2. Apply the Red (exploit test) + Green (patch) commits on that branch.
+3. Open a PR via `gh pr create`:
+   - Title: `[tdd-audit] Fix <vulnerability name>: <one-line description>`
+   - Body: finding description, exploit test name, patch summary, link to vulnerability pattern.
+4. Do **not** merge — leave the PR for human review.
+5. Print the PR URL after creation.
+
+Requires `GITHUB_TOKEN` (env or `github_token` config) and `github_repo` (env or auto-detected from git remote).
+
+---
+
+## Watch Mode (`--watch`)
+
+Re-scan affected files on save. When invoked with `--watch`:
+
+1. Complete Phase 0 (full static scan) once at startup.
+2. Start a file watcher on the repo root (excluding `node_modules`, `dist`, `.git`, and paths in `ignore`).
+3. On any file save: re-run Phase 0 static scan for that file only.
+4. Report new or resolved findings immediately in the terminal. Do not run agents or apply fixes.
+5. Continue watching until the process is terminated.
+
+Watch mode is for real-time feedback during development. Use `/caller-audit` (or the equivalent skill command) for full agentic remediation.
+
+---
+
+## Notifications
+
+After every completed scan (CLI, `--ai`, `POST /scan`):
+
+**Webhook** (`webhook_url`): POST the following JSON:
+```json
+{
+  "project":          "<project>",
+  "org":              "<org>",
+  "security_name":    "<security_name or omitted if not set>",
+  "security_email":   "<security_email or omitted if not set>",
+  "timestamp":        "<ISO 8601>",
+  "duration_ms":      4200,
+  "summary":          { "critical": 1, "high": 3, "medium": 2, "low": 0 },
+  "findings":         [ ... ]
+}
+```
+
+**Slack** (`slack_webhook`): Send a message to `slack_channel` (or the webhook default):
+```
+🔴 tdd-audit — <project>
+1 critical · 3 high · 2 medium
+Run /caller-audit to remediate.
+```
+
+Send notifications only after Phase 0e (findings are final). Do not send during incremental watch-mode scans.
+
+---
+
 ## Config Bootstrap (runs before Phase 0 every time)
 
 Before scanning, read `.tdd-audit.json` from the repo root if it exists. Store the values — they control branding, extensibility, and session setup for this run.
 
 ```
 If .tdd-audit.json exists:
-  Load: org, project, tdd_site, badge_label,
+  Load: org, project, tdd_site, badge_label, security_name, security_email,
         pattern_repos, extra_skill_dirs, extra_repos,
         mcp_services, extra_domains
 If absent:
@@ -588,6 +699,21 @@ Once coverage is ≥ 95%, add a coverage badge to `README.md`.
 
 Adjust the percentage in the badge URL to match the real number (e.g., `97%25` for 97%).
 
+**Badge label and link defaults:**
+
+- If `badge_label` is set in config, use it as the label (e.g., `dc-audit`). Otherwise use `tdd-audit`.
+- If `tdd_site` is set in config, link the badge to that URL. Otherwise link to the `@lhi/tdd-audit` npm page (`https://www.npmjs.com/package/@lhi/tdd-audit`).
+
+```markdown
+<!-- default (no config overrides) -->
+[![tdd-audit](https://img.shields.io/badge/tdd--audit-passing-brightgreen)](https://www.npmjs.com/package/@lhi/tdd-audit)
+
+<!-- with badge_label and tdd_site set -->
+[![dc-audit](https://img.shields.io/badge/dc--audit-passing-brightgreen)](https://security.example.com)
+```
+
+The `<!-- tdd-audit-badge -->` HTML comment must follow the badge line so it can be located and updated on subsequent runs.
+
 ---
 
 ## Phase 6: SECURITY.md
@@ -613,7 +739,7 @@ Please **do not** open a public GitHub issue for security vulnerabilities.
 
 Report vulnerabilities privately via:
 - **GitHub**: Use [GitHub's private vulnerability reporting](../../security/advisories/new)
-- **Email**: security@example.com *(replace with project contact)*
+- **Contact**: <if security_name and security_email both set: "Name <email>"; if only email: email; if only name: name; if neither: "security@example.com (replace with project contact)">
 
 Expect acknowledgement within **48 hours** and a patch or mitigation plan within **14 days** for verified HIGH/CRITICAL issues. Reporters are credited in release notes unless anonymity is requested.
 
@@ -633,6 +759,63 @@ Replace placeholder email and version table with the project's real information.
 
 ---
 
+## Phase 6b: SBOM (`--sbom`)
+
+If `sbom: true` in config or `--sbom` flag is passed, generate a [CycloneDX](https://cyclonedx.org/) Software Bill of Materials after the dependency audit:
+
+```bash
+# Node.js
+npx @cyclonedx/cyclonedx-npm --output-file sbom.json
+
+# Python
+cyclonedx-py --output sbom.json
+
+# Go
+cyclonedx-gomod app -output sbom.json
+```
+
+Write to `sbom.json` at the project root. Note the path in the Final Report.
+
+---
+
+## Phase 6c: Compliance Report (`--format report`)
+
+If `report: true` in config or `--format report` flag is passed, generate a markdown compliance report at `audit-report.md`:
+
+```markdown
+# Security Audit Report — <project> — <YYYY-MM-DD>
+
+**Org:** <org>  **Auditor:** tdd-audit  **Security Contact:** <security_name if set, security_email if set, or N/A>  **Status:** Passed / Failed
+
+## Findings Summary
+| Severity | Count | Status |
+|---|---|---|
+| CRITICAL | 0 | ✅ Remediated |
+| HIGH     | 2 | ✅ Remediated |
+| MEDIUM   | 1 | ✅ Remediated |
+| LOW      | 0 | — |
+
+## Fix Evidence
+| Vulnerability | Exploit Test | Patch Commit | Suite |
+|---|---|---|---|
+| JWT algorithm confusion | auth-jwt-alg.test.js | abc1234 | ✅ |
+
+## Coverage Gate
+Line: 96.4% ✅  Branch: 95.1% ✅  Threshold: 95%
+
+## Hardening Controls Applied
+- Security headers (Helmet / CSP)
+- Rate limiting on auth routes
+- Dependency audit passed
+
+## SBOM
+sbom.json (CycloneDX 1.4) — generated <timestamp>
+```
+
+Suitable for attaching to SOC 2 audits, ISO 27001 evidence packages, and vendor security questionnaires.
+
+---
+
 ## Final Report
 
 After Phases 4–6 complete, append to the Remediation Summary:
@@ -642,10 +825,14 @@ After Phases 4–6 complete, append to the Remediation Summary:
 
 | Item | Status | Detail |
 |---|---|---|
-| Line coverage   | ✅ | 96.4% |
-| Branch coverage | ✅ | 95.1% |
-| README badge    | ✅ | Updated to 96% (brightgreen) |
-| SECURITY.md     | ✅ | Created at repo root |
+| Line coverage       | ✅ | 96.4% |
+| Branch coverage     | ✅ | 95.1% |
+| README badge        | ✅ | Updated to 96% (brightgreen) |
+| SECURITY.md         | ✅ | Created at repo root |
+| SBOM                | ✅/⏭ | sbom.json (CycloneDX) generated — or N/A if --sbom not passed |
+| Compliance report   | ✅/⏭ | audit-report.md generated — or N/A if --format report not passed |
+| Notifications fired | ✅/⏭ | webhook + Slack — or N/A if not configured |
+| Patterns contributed| ✅/⏭ | N new patterns to <pattern_repo.name> — or "existing patterns verified" |
 ```
 
 ---

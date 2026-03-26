@@ -10,6 +10,7 @@ module.exports = {
   coverageDirectory: 'coverage',
   collectCoverageFrom: ['lib/**/*.js', 'index.js'],
   testTimeout: 10000,
+  workerIdleMemoryLimit: '512MB',
   testPathIgnorePatterns: [
     '/node_modules/',
     // Boilerplate templates — these are meant to be copied & filled in by the user
