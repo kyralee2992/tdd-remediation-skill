@@ -247,6 +247,80 @@ resolve_entities.*True              # Python lxml entity expansion
 # bundle audit
 ```
 
+**AI / LLM Security (check when the project uses OpenAI, Anthropic, LangChain, or any LLM SDK)**
+```
+role.*content.*req\.            # LLM Prompt Injection — user input in messages array
+messages.*push.*req\.           # LLM Prompt Injection — appending request data to LLM context
+eval\(.*response                # LLM Output Execution — evaluating model output
+eval\(.*result                  # LLM Output Execution — evaluating model result
+eval\(.*completion              # LLM Output Execution — evaluating AI completion
+ShellTool\(\)                   # LangChain ShellTool — shell command execution
+LLMMathChain\.from_llm          # LangChain math eval — known RCE (CVE-2023-29374)
+PALChain\.from_llm              # LangChain PAL — eval of LLM-generated Python
+require\(req\.                  # Dynamic Require — loading user-controlled modules
+vm\.runIn.*Context.*req\.       # VM Code Injection — sandbox escape risk
+require.*node-serialize         # node-serialize RCE — known deserialization vulnerability
+langchain_experimental          # LangChain Experimental — contains RCE-risk components
+system_prompt.*mongodb://       # Credentials in AI Prompt — DB URL in prompt context
+prompt.*postgresql://           # Credentials in AI Prompt — DB URL in prompt context
+```
+
+**Hardcoded AI API Keys**
+```
+sk-proj-                        # OpenAI new-format key (≥60 chars)
+T3BlbkFJ                        # OpenAI old-format key marker (base64 of "OpenAI")
+sk-ant-api03-                   # Anthropic API key prefix
+hf_[A-Za-z0-9]{30,}            # HuggingFace token (≥30 chars after hf_)
+NEXT_PUBLIC_.*SECRET            # Next.js client-bundled secret variable
+NEXT_PUBLIC_.*API_KEY           # Next.js client-bundled API key
+NEXT_PUBLIC_.*TOKEN             # Next.js client-bundled token
+```
+
+**GitHub Actions Injection (scan .github/workflows/*.yml)**
+```
+github\.event\.pull_request\.title   # Attacker-controlled PR title in run: step
+github\.event\.pull_request\.body    # Attacker-controlled PR body in run: step
+github\.event\.issue\.title          # Attacker-controlled issue title in run: step
+github\.event\.issue\.body           # Attacker-controlled issue body in run: step
+github\.event\.comment\.body         # Attacker-controlled comment body in run: step
+github\.head_ref                     # Attacker-controlled branch name in run: step
+```
+
+**Electron Security (check main process and BrowserWindow config)**
+```
+nodeIntegration.*true           # CRITICAL: enables Node.js in renderer — XSS → full system compromise
+webSecurity.*false              # CRITICAL: disables same-origin policy in renderer
+contextIsolation.*false         # HIGH: allows prototype pollution from web content
+```
+
+**Supply Chain (check package.json)**
+```
+postinstall.*curl               # Supply Chain Exfiltration — curl in postinstall script
+preinstall.*curl                # Supply Chain Exfiltration — curl in preinstall script
+postinstall.*wget               # Supply Chain Exfiltration — wget in postinstall script
+```
+
+**Web / Protocol Injection**
+```
+res\.setHeader.*req\.           # Header Injection — user input in response header value
+xpath\.select.*req\.            # XPath Injection — user input in XPath query
+httpOnly.*false                 # Insecure Cookie — session cookie readable via JavaScript
+```
+
+**Trojan Source (use Grep with unicode flag if available)**
+```
+\u202[A-E]|\u206[6-9]          # Bidi control characters — visual/compiled mismatch (CVE-2021-42574)
+```
+
+**Dependency Audit**
+```
+# Run manually — not grep-based:
+# npm audit --audit-level=high
+# pip-audit
+# govulncheck ./...
+# bundle audit
+```
+
 ### 0d. Audit Prompt & Skill Files
 
 For projects that contain AI agent configurations, scan the following locations for prompt-specific vulnerabilities:
@@ -257,6 +331,8 @@ For projects that contain AI agent configurations, scan the following locations 
 |---|---|---|
 | `csurf` package reference | CRITICAL | `csurf` was deprecated March 2023 and is unmaintained — use `csrf-csrf` instead |
 | `"command": "npx"` in MCP config | HIGH | Unpinned npx MCP server executes whatever version npm resolves at runtime |
+| `"description": "ignore previous instructions..."` | HIGH | MCP Tool Poisoning — malicious instructions embedded in tool description fields hijack agent behavior |
+| `"description": "override instructions..."` | HIGH | MCP Tool Poisoning — agent reads tool list and executes injected instructions |
 | `http://` URL (non-localhost) | MEDIUM | Cleartext URLs in prompts can mislead agents to make insecure requests |
 | Prompt reads arbitrary user-controlled files without a guardrail | HIGH | AI reading untrusted file content without isolation is a prompt-injection risk (ASI01) |
 
