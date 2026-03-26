@@ -12,7 +12,7 @@ const {
   printFindings,
 } = require('./lib/scanner');
 const { toJson, toSarif, toText } = require('./lib/reporter');
-const { writeInitConfig } = require('./lib/config');
+const { writeInitConfig, loadConfig, parseCliOverrides } = require('./lib/config');
 const { badgeLine, injectBadge } = require('./lib/badge');
 
 const args = process.argv.slice(2);
@@ -35,6 +35,7 @@ const outputFormat = args.includes('--json') ? 'json'
 const agentBaseDir = isLocal ? process.cwd() : os.homedir();
 const agentDirName = isClaude ? '.claude' : '.agents';
 const projectDir = process.cwd();
+const config = loadConfig(projectDir, parseCliOverrides(args));
 
 const targetSkillDir = path.join(agentBaseDir, agentDirName, 'skills', 'tdd-remediation');
 const targetWorkflowDir = isClaude
@@ -88,7 +89,7 @@ if (scanOnly) {
     process.stdout.write('\n');
     printFindings(findings, exempted);
   }
-  injectBadge(projectDir, badgeLine(findings));
+  injectBadge(projectDir, badgeLine(findings, config.tdd_site));
   process.exit(0);
 }
 
@@ -245,7 +246,7 @@ if (!skipScan) {
   const findings = quickScan(projectDir);
   process.stdout.write('\n');
   printFindings(findings);
-  const badge = badgeLine(findings);
+  const badge = badgeLine(findings, config.tdd_site);
   injectBadge(projectDir, badge);
   console.log('✅ README badge updated');
 }

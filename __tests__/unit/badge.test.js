@@ -167,3 +167,50 @@ describe('badgeLine() — null / undefined findings', () => {
     expect(line).toMatch(/passing/i);
   });
 });
+
+// ─── badgeLine — tdd_site / siteUrl fallback ─────────────────────────────────
+
+describe('badgeLine() — siteUrl / tdd_site', () => {
+  const NPM_URL = 'https://www.npmjs.com/package/@lhi/tdd-audit';
+
+  test('falls back to npm URL when siteUrl is not provided (skill mode)', () => {
+    const line = badgeLine([]);
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('falls back to npm URL when siteUrl is null', () => {
+    const line = badgeLine([], null);
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('falls back to npm URL when siteUrl is an empty string', () => {
+    const line = badgeLine([], '');
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('falls back to npm URL when siteUrl is whitespace only', () => {
+    const line = badgeLine([], '   ');
+    expect(line).toContain(NPM_URL);
+  });
+
+  test('uses custom siteUrl when tdd_site is configured', () => {
+    const customUrl = 'https://leehodlingsintl.com/security';
+    const line = badgeLine([], customUrl);
+    expect(line).toContain(customUrl);
+    expect(line).not.toContain(NPM_URL);
+  });
+
+  test('custom siteUrl is trimmed before use', () => {
+    const line = badgeLine([], '  https://example.com/shield  ');
+    expect(line).toContain('https://example.com/shield');
+    expect(line).not.toContain(NPM_URL);
+  });
+
+  test('custom siteUrl works regardless of finding severity', () => {
+    const site = 'https://example.com/security';
+    const critical = [{ severity: 'CRITICAL', likelyFalsePositive: false }];
+    const line = badgeLine(critical, site);
+    expect(line).toContain(site);
+    expect(line).toMatch(/critical/i);
+  });
+});
