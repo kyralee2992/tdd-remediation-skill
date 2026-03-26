@@ -2,7 +2,7 @@
 ![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)
 [![tdd-audit](https://img.shields.io/badge/tdd--audit-passing-brightgreen)](https://www.npmjs.com/package/@lhi/tdd-audit) <!-- tdd-audit-badge -->
 
-> **v1.17.0** — AI-powered security audit skill for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Four output depth tiers let you choose between a fast scan report, a rich findings report, copy-ready patches, or fully automated patch application — all backed by an agentic LLM with tool use.
+> **v1.18.0** — AI-powered security audit skill for **Claude Code, Gemini CLI, Cursor, Codex, and OpenCode**. Four output depth tiers let you choose between a fast scan report, a rich findings report, copy-ready patches, or fully automated patch application — all backed by an agentic LLM with tool use.
 
 ## Install
 
