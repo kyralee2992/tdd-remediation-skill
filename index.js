@@ -254,7 +254,7 @@ if (withHooks) {
 
 if (!skipScan) {
   process.stdout.write('\n🔍 Scanning for vulnerability patterns...');
-  const findings = quickScan(projectDir);
+  const findings = quickScan(projectDir, config.ignore);
   process.stdout.write('\n');
   printFindings(findings);
   const badge = badgeLine(findings, config.tdd_site);

@@ -50,12 +50,14 @@ afterEach(() => {
 describe('safePath() — path traversal guard', () => {
   test('allows a normal relative path inside the project', () => {
     const resolved = safePath('sub/file.js', tmpDir);
-    expect(resolved).toBe(path.join(tmpDir, 'sub/file.js'));
+    // safePath now returns the realpath-normalised path (SEC-30/31 fix),
+    // so compare against the realpath of the expected location.
+    expect(resolved).toBe(fs.realpathSync(path.join(tmpDir, 'sub/file.js')));
   });
 
   test('allows the project root itself', () => {
     const resolved = safePath('.', tmpDir);
-    expect(resolved).toBe(path.resolve(tmpDir));
+    expect(resolved).toBe(fs.realpathSync(path.resolve(tmpDir)));
   });
 
   test('allows an absolute path inside the project', () => {

@@ -129,6 +129,7 @@ The rule: suppress when there is an **odd** number of backticks before the match
 ```javascript
 {
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW',
+  confidence: number,     // 0.0–1.0; sourced from pattern definition (default 0.85)
   name: string,           // pattern display name, e.g. "SQL Injection"
   file: string,           // relative path from projectDir
   line: number,           // 1-indexed line number
@@ -137,6 +138,15 @@ The rule: suppress when there is an **odd** number of backticks before the match
   likelyFalsePositive: boolean,
 }
 ```
+
+`confidence` reflects the pattern's historical signal-to-noise ratio. Values below 0.80 indicate patterns that produce frequent false positives — filter on `finding.confidence < 0.80` to separate high-confidence findings from advisory ones.
+
+| Confidence range | Meaning |
+|---|---|
+| 0.85 (default) | High-signal pattern; act on it |
+| 0.75 | Worth reviewing; some FPs expected (e.g. `Broken Auth`, `Timing-Unsafe Comparison`) |
+| 0.70 | Moderate FP rate; manual triage recommended (e.g. `CORS Wildcard`, `JWT No Revocation`) |
+| 0.65 | High FP rate; treat as advisory (e.g. `Silent Exception Swallow`, `Missing system message`) |
 
 ---
 
@@ -148,10 +158,13 @@ All vulnerability patterns live in the `VULN_PATTERNS` array in `lib/scanner.js`
 {
   name: 'Display Name',    // shown in the report
   severity: 'HIGH',        // CRITICAL | HIGH | MEDIUM | LOW
+  confidence: 0.7,         // optional — override the default 0.85 for high-FP patterns
   pattern: /regex/i,       // matched against each line of each file
   skipInTests: true,       // optional — mark likelyFalsePositive when matched in test files
 }
 ```
+
+Omitting `confidence` defaults to `0.85` at finding assembly time. Set it below `0.80` when the pattern is known to produce frequent false positives. See the confidence table above for guidance.
 
 Prompt-specific patterns live in `PROMPT_PATTERNS`:
 

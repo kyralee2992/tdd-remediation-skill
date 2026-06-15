@@ -46,7 +46,7 @@ On first run the installer:
 1. Scaffolds `__tests__/security/` with framework-matched exploit test boilerplate
 2. Adds `test:security` to `package.json`
 3. Creates `.github/workflows/security-tests.yml` — SHA-pinned actions, `npm audit` on every PR
-4. Installs the `/tdd-audit` skill in your AI agent
+4. Installs the `/tdd-audit` skill in your AI agent (`SKILL.md` — `context: fork` so long audits run in an isolated token budget and don't consume your main conversation window)
 
 Then open your agent and type `/tdd-audit`. It handles the rest.
 
@@ -71,6 +71,8 @@ Then open your agent and type `/tdd-audit`. It handles the rest.
 **AI / LLM-specific** (the ones that will actually get you hacked in 2025) — LLM prompt injection · Eval of model output · LangChain ShellTool / ExecChain · Unbounded agent loops · MCP credential leakage · GitHub Actions expression injection · Hardcoded provider keys (OpenAI, Anthropic, Gemini, Cohere, Mistral, HuggingFace) · Missing `max_tokens` · Dynamic require from user input · VM sandbox escape · Electron `nodeIntegration: true`
 
 **Vibecoding anti-patterns** — `localStorage` token storage · `Math.random()` for session IDs · `process.env.SECRET || "hardcoded-fallback"` · Silent exception swallowing · Insecure WebSocket URLs
+
+Every finding now carries a **confidence score** (0.0–1.0). Patterns with a historically high false-positive rate are pre-tagged at 0.65–0.75; all others default to 0.85. Use `confidence < 0.80` as a noise filter when triaging large codebases.
 
 ---
 
@@ -253,13 +255,13 @@ Supported providers: `anthropic` · `openai` · `gemini` · `ollama` · **any Op
 ## Testing
 
 ```bash
-npm test                  # full suite (841 tests)
+npm test                  # full suite (905 tests)
 npm run test:unit         # unit tests with coverage
 npm run test:security     # security regression tests only
 npm run test:e2e          # end-to-end REST API tests
 ```
 
-Security tests cover: prompt injection · path traversal · SSRF via webhook and baseUrl · rate limiting · timing-safe auth · XFF bypass · job store bounds · SARIF schema · AI key redaction · coverage skip detection · and more. Every past vulnerability is a permanent regression test.
+Security tests cover: prompt injection · path traversal · SSRF via webhook and baseUrl · rate limiting · timing-safe auth · XFF bypass · job store bounds · SARIF schema · AI key redaction · coverage skip detection · symlink escape (read + write) · git URL scheme validation · findings prompt injection · glob-field ReDoS · and more. Every past vulnerability is a permanent regression test.
 
 ---
 

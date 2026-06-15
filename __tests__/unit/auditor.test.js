@@ -28,6 +28,7 @@ const {
   aiToSarif,
   buildSystemPrompt,
   loadSkillSuite,
+  syncPatternRepos,
   TOOLS_ANTHROPIC,
   TOOLS_OPENAI,
   TOOLS_GEMINI,
@@ -64,11 +65,13 @@ afterEach(() => {
 describe('safePath()', () => {
   test('resolves a normal relative path', () => {
     const r = safePath('src/index.js', tmpDir);
-    expect(r).toBe(path.join(tmpDir, 'src/index.js'));
+    // safePath returns the realpath-normalised result (SEC-30/31 fix);
+    // compare against realpathSync to handle platform symlinks (e.g. macOS /var→/private/var).
+    expect(r).toBe(fs.realpathSync(path.join(tmpDir, 'src/index.js')));
   });
 
   test('allows the project root itself', () => {
-    expect(safePath('.', tmpDir)).toBe(path.resolve(tmpDir));
+    expect(safePath('.', tmpDir)).toBe(fs.realpathSync(path.resolve(tmpDir)));
   });
 
   test('throws on path traversal "../"', () => {
@@ -265,8 +268,10 @@ describe('toolWriteFile()', () => {
     expect(r.error).toBeDefined();
   });
 
-  test('returns { error: "Write failed: ..." } when fs.writeFileSync throws', () => {
-    jest.spyOn(fs, 'writeFileSync').mockImplementationOnce(() => {
+  test('returns { error: "Write failed: ..." } when the underlying write throws', () => {
+    // toolWriteFile now uses openSync (with O_NOFOLLOW) instead of writeFileSync.
+    // Mock openSync to simulate a permission error.
+    jest.spyOn(fs, 'openSync').mockImplementationOnce(() => {
       throw new Error('EACCES: permission denied');
     });
     const r = toolWriteFile({ path: 'no-write.txt', content: 'data' }, tmpDir);
@@ -729,6 +734,149 @@ describe('runAudit() — onText and outputWriter callbacks', () => {
 });
 
 // ─── runAudit — input validation ──────────────────────────────────────────────
+
+// ─── syncPatternRepos ─────────────────────────────────────────────────────────
+
+describe('syncPatternRepos()', () => {
+  // auditor.js calls childProcess.spawnSync (not a destructured local), so
+  // spying on the same required instance intercepts all calls correctly.
+  const childProcess = require('child_process');
+  // The built-in path that syncPatternRepos auto-includes when it exists on disk.
+  const BUILTIN_PATH = path.join(os.homedir(), 'github', 'tdd-patterns');
+
+  // Prevent the built-in ~/github/tdd-patterns from being auto-included in
+  // every test — its presence on a developer machine would inflate result arrays
+  // and consume mock spawnSync responses unexpectedly.
+  beforeEach(() => {
+    const realExistsSync = fs.existsSync.bind(fs);
+    jest.spyOn(fs, 'existsSync').mockImplementation((p) => {
+      if (p === BUILTIN_PATH) return false;
+      return realExistsSync(p);
+    });
+  });
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  function mockSpawn(responses) {
+    let callCount = 0;
+    jest.spyOn(childProcess, 'spawnSync').mockImplementation(() => {
+      const r = responses[callCount] || { stdout: '', stderr: '', status: 0 };
+      callCount++;
+      return r;
+    });
+  }
+
+  test('returns empty array when no repos configured and built-in path absent', () => {
+    const results = syncPatternRepos([]);
+    expect(results).toEqual([]);
+  });
+
+  test('skips a repo that does not exist locally and has no url', () => {
+    const results = syncPatternRepos([{ name: 'no-url-repo', local_path: path.join(os.tmpdir(), 'does-not-exist-xyz-' + Date.now()) }]);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('skipped');
+    expect(results[0].error).toMatch(/no url/i);
+  });
+
+  test('reports error when local_path is empty string', () => {
+    const results = syncPatternRepos([{ name: 'bad', local_path: '' }]);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('error');
+    expect(results[0].error).toMatch(/local_path/i);
+  });
+
+  test('reports current when HEAD is unchanged after pull', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tdd-sync-test-'));
+    try {
+      const hash = 'abc1234abc1234abc1234abc1234abc1234abc1234';
+      mockSpawn([
+        { stdout: hash + '\n', stderr: '', status: 0 }, // rev-parse before
+        { stdout: 'Already up to date.\n', stderr: '', status: 0 }, // pull
+        { stdout: hash + '\n', stderr: '', status: 0 }, // rev-parse after
+      ]);
+      const results = syncPatternRepos([{ name: 'test-repo', local_path: repoDir }]);
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('current');
+      expect(results[0].newCommits).toBe(0);
+      expect(results[0].headAfter).toBe(hash);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test('reports updated with commit count when HEAD changes after pull', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tdd-sync-test-'));
+    try {
+      const before = 'aaa0000aaa0000aaa0000aaa0000aaa0000aaa0000';
+      const after  = 'bbb1111bbb1111bbb1111bbb1111bbb1111bbb1111';
+      mockSpawn([
+        { stdout: before + '\n', stderr: '', status: 0 }, // rev-parse before
+        { stdout: 'Updating abc..bbb\n', stderr: '', status: 0 }, // pull
+        { stdout: after + '\n',  stderr: '', status: 0 }, // rev-parse after
+        { stdout: 'bbb1111 fix: patch CVE\naaa9999 feat: add check\n', stderr: '', status: 0 }, // log
+      ]);
+      const results = syncPatternRepos([{ name: 'test-repo', local_path: repoDir }]);
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('updated');
+      expect(results[0].newCommits).toBe(2);
+      expect(results[0].headAfter).toBe(after);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test('reports error when git pull fails', () => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tdd-sync-test-'));
+    try {
+      mockSpawn([
+        { stdout: 'abc123\n', stderr: '', status: 0 }, // rev-parse before
+        { stdout: '', stderr: 'fatal: unable to connect', status: 128 }, // pull fails
+      ]);
+      const results = syncPatternRepos([{ name: 'test-repo', local_path: repoDir }]);
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('error');
+      expect(results[0].error).toMatch(/unable to connect/i);
+    } finally {
+      fs.rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
+  test('clones a missing repo when url is provided', () => {
+    const cloneTarget = path.join(os.tmpdir(), 'tdd-clone-test-' + Date.now());
+    const headHash = 'ccc2222ccc2222ccc2222ccc2222ccc2222ccc2222';
+    mockSpawn([
+      { stdout: '', stderr: '', status: 0 },              // git clone succeeds
+      { stdout: headHash + '\n', stderr: '', status: 0 }, // rev-parse HEAD after clone
+    ]);
+    try {
+      const results = syncPatternRepos([{ name: 'new-repo', local_path: cloneTarget, url: 'https://example.com/repo.git' }]);
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe('cloned');
+      expect(results[0].headAfter).toBe(headHash);
+    } finally {
+      if (fs.existsSync(cloneTarget)) fs.rmSync(cloneTarget, { recursive: true, force: true });
+    }
+  });
+
+  test('reports error when git clone fails', () => {
+    const cloneTarget = path.join(os.tmpdir(), 'tdd-clone-fail-' + Date.now());
+    mockSpawn([
+      { stdout: '', stderr: 'fatal: repository not found', status: 128 }, // clone fails
+    ]);
+    const results = syncPatternRepos([{ name: 'bad-repo', local_path: cloneTarget, url: 'https://example.com/bad.git' }]);
+    expect(results).toHaveLength(1);
+    expect(results[0].status).toBe('error');
+    expect(results[0].error).toMatch(/not found/i);
+  });
+
+  test('expands leading ~ in local_path to homedir', () => {
+    // A path starting with ~ should expand — if it doesn't exist and has no url, status is 'skipped'.
+    const results = syncPatternRepos([{ name: 'home-repo', local_path: '~/github/does-not-exist-xyz' }]);
+    expect(results).toHaveLength(1);
+    expect(['skipped', 'error']).toContain(results[0].status);
+    // Confirm ~ was expanded (localPath should start with homedir, not ~)
+    expect(results[0].localPath).not.toMatch(/^~/);
+  });
+});
 
 describe('runAudit() — input validation', () => {
   const { runAudit } = require('../../lib/auditor');

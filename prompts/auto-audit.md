@@ -13,6 +13,14 @@ audit_status: safe
 
 When invoked in Auto-Audit mode, proactively secure the user's entire repository without waiting for explicit files to be provided.
 
+## Signal
+```
+SCOPE: sql-injection | nosql-injection | template-injection | xss | idor | cmd-injection | path-traversal | ssrf | open-redirect | broken-auth | mass-assign | proto-pollution | weak-crypto | sensitive-storage | tls-bypass | hardcoded-secrets | missing-rate-limit | missing-security-headers | cors-wildcard | xxe | insecure-deserialization | webview-js-bridge
+FLOW:  detect-stack→scope-scan→explore(Glob+Grep+Read)→AUDIT-report→confirm→remediate(CRIT-first,one-at-a-time)→harden
+GATE:  no-changes-before-confirm | one-vuln-at-a-time | test-proves-closed-before-advance
+SVR:   node | python | go | ruby | java | php | flutter | react | react-native | next.js
+```
+
 ## Scan-Only Mode
 
 If the user passes `--scan` or `--scan-only`, requests "audit only", or asks for a report without changes, **stop after Phase 0e**. Output the full Audit Report and make no file modifications. Useful for read-only contexts, initial assessments, and planning conversations.
@@ -145,18 +153,33 @@ If absent:
   > org-specific patterns, MCP services, and branding.
 ```
 
-**Pattern repos** — **on every single run**, sync all pattern repos before doing anything else. This is mandatory — do not skip even if the repo was just pulled.
+**Pattern repos** — the CLI has already synced all pattern repos before invoking you. The user message contains a `## Pattern Sync Report` section with verified results (repo name, status, HEAD commit hash, local path). You must not re-pull — the sync already happened.
 
-For each entry in `pattern_repos` (plus the built-in `~/github/tdd-patterns/` if it exists on this machine):
-```bash
-# Clone if missing, then ALWAYS pull to get the latest patterns
-if [ ! -d "<local_path>" ]; then
-  git clone <url> <local_path>
-fi
-cd <local_path> && git pull --ff-only origin main
+### Phase 0 Preflight (mandatory — output this block before Phase 0a)
+
+Before doing anything else, output the following block verbatim in your response. Populate each field from the `## Pattern Sync Report` in the user message. Do not paraphrase or omit repos. If the sync report is absent, write `MISSING — CLI sync did not run` for each field.
+
 ```
-If the pull brings in new commits, note it: `> ✔ tdd-patterns updated (N new commits).`
-If already up to date: `> ✔ tdd-patterns is current.`
+### Preflight Evidence
+| repo | status | head | path |
+|------|--------|------|------|
+| <name> | <SYNCED/SKIPPED/ERROR> | <HEAD hash or —> | <localPath> |
+```
+
+⛔ **Do not begin Phase 0a until this Preflight Evidence table appears in your response.**
+
+### Preflight Verification (Option 4 — cross-check after outputting Preflight Evidence)
+
+After outputting the Preflight Evidence table, verify each SYNCED repo by checking the reported HEAD hash against the actual repo state:
+
+1. For each repo with status `SYNCED`, note the HEAD hash from the Preflight Evidence table.
+2. The CLI-reported HEAD is authoritative. Confirm it by reading `<localPath>/.git/refs/heads/main` or `<localPath>/.git/packed-refs` if the tool permits, or otherwise accept the CLI-reported value.
+3. Output one of:
+   - `> ✔ Verified: <name> HEAD <short-hash> confirmed.`
+   - `> ⚠ Cannot verify: <name> is outside the audited project directory (tool access restricted) — CLI-reported HEAD accepted.`
+4. If a repo has status `ERROR` or `SKIPPED`, output `> ⚠ <name> was not synced — pattern knowledge may be stale. Proceed with caution.`
+
+⛔ **Do not begin Phase 0a until all Preflight Verification lines appear in your response.**
 
 Then re-index into its namespace:
 ```

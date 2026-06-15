@@ -15,6 +15,10 @@ Once all known vulnerabilities are remediated, Phase 4 goes beyond patching hole
 
 This phase is **additive and non-breaking** — apply each control independently, confirm the test suite remains green after each.
 
+```
+HARDEN: 4a:headers(helmet) | 4b:csp | 4c:csrf | 4d:rate-limit | 4e:dep-scan(npm-audit) | 4f:secret-scan(gitleaks) | 4g:prod-errors | 4h:sri | 4i:agentic-ai-controls
+```
+
 ---
 
 ## 4a. Security Headers (Helmet)

@@ -10,8 +10,40 @@ risk: low
 source: personal
 date_added: "2024-01-01"
 audited_by: lcanady
-last_audited: "2026-03-22"
+last_audited: "2026-03-31"
 audit_status: safe
+
+# ── Claude Code skill runtime metadata ──────────────────────────────────────
+# context: fork runs the audit as a sub-agent with an isolated token budget,
+# preventing long audits from consuming the main conversation's context window.
+context: fork
+effort: complex
+argument-hint: "[--scan | --pr | --depth tier-1..4 | --open-pr | --org <github-org>]"
+
+# allowed-tools: declare the exact tool surface so permission prompts are
+# predictable and a prompt-injected LLM cannot call arbitrary tools.
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+  - Bash
+  - Edit
+  - Write
+  - WebSearch
+  - WebFetch
+  - TaskCreate
+  - TaskUpdate
+
+# paths: activate this skill automatically when security-relevant files change.
+# Claude Code will surface it in suggestions whenever these patterns are modified.
+paths:
+  - "**/*.{js,ts,jsx,tsx,py,go,rb,java,php}"
+  - "**/__tests__/**"
+  - "**/*.{test,spec}.{js,ts}"
+  - ".github/workflows/*.{yml,yaml}"
+  - "package.json"
+  - "requirements.txt"
+  - "go.mod"
 ---
 
 # TDD Remediation Protocol
@@ -29,12 +61,28 @@ If the user asks you to "Run the TDD Remediation Auto-Audit" or asks you to impl
    - **Flutter / Dart**: `lib/screens/`, `lib/services/`, `lib/api/`, `lib/repositories/`, `pubspec.yaml`
    Search for anti-patterns across the full vulnerability surface: SQL/NoSQL/Template injection, IDOR, XSS, command injection, path traversal, SSRF, open redirects, broken auth, mass assignment, prototype pollution, weak crypto, sensitive storage, TLS bypasses, hardcoded secrets, missing rate limiting, missing security headers, CORS wildcards, XXE, insecure deserialization, WebView JS bridge exposure. Full search patterns are in [auto-audit.md](./prompts/auto-audit.md).
 2. **Plan**: Present a structured list of vulnerabilities (grouped by severity: CRITICAL / HIGH / MEDIUM / LOW) and get confirmation before making any changes.
+
+   ```
+   AUDIT:  <project> | CRIT:N HIGH:N MED:N LOW:N | confirm-before-fix
+   CRIT:   <vuln-label>@<file:line> — <one-line-risk>
+   HIGH:   <vuln-label>@<file:line> — <one-line-risk>
+   MED:    <vuln-label>@<file:line> — <one-line-risk>
+   LOW:    <vuln-label>@<file:line> — <one-line-risk>
+   ```
+
 3. **Self-Implement**: For *each* confirmed vulnerability, autonomously execute the complete 3-phase protocol:
    - **[Phase 1 (Red)](./prompts/red-phase.md)**: Write the exploit test ensuring it fails.
    - **[Phase 2 (Green)](./prompts/green-phase.md)**: Write the security patch ensuring the test passes.
    - **[Phase 3 (Refactor)](./prompts/refactor-phase.md)**: Run the full test suite and ensure no business logic broke.
 4. **[Phase 4 (Hardening)](./prompts/hardening-phase.md)**: After all vulnerabilities are remediated, apply proactive defense-in-depth controls: security headers (Helmet), CSP, CSRF protection, rate limiting audit, dependency vulnerability scan, secret history scan, production error handling, and SRI for third-party scripts.
 Move methodically through vulnerabilities one by one, CRITICAL-first. Do not advance until the current vulnerability is fully remediated.
+
+```
+GATE:RED      exploit-test-exists | test-fails-for-right-reason | no-prod-code-changed
+GATE:GREEN    exploit-test-passes | patch-minimal | no-unrelated-changes
+GATE:REFACTOR all-tests-green | no-regressions | patch-clean
+GATE:HARDEN   headers | csp | csrf | rate-limit | dep-scan | secret-scan | prod-errors
+```
 
 ---
 

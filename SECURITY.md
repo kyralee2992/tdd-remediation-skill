@@ -43,3 +43,8 @@ The following protections are applied and verified by automated security tests (
 | Dependency audit | `npm audit` runs in CI; no known vulnerabilities at time of release | SEC-07, SEC-09 |
 | AI-key redaction | API keys are HMAC'd before appearing in error messages | SEC-21 |
 | Job store bounds | In-memory job store capped at `MAX_JOBS` with TTL eviction to prevent unbounded memory growth | SEC-13 |
+| Symlink read escape | `safePath()` runs a two-pass guard — lexical `path.resolve()` + `fs.realpathSync()` — to block symlinks that resolve outside the project root | SEC-30 |
+| Symlink write escape | `toolWriteFile()` opens files with `O_NOFOLLOW` (POSIX), preventing the OS from following a symlink at the final path component at write time | SEC-31 |
+| Git URL scheme validation | `syncPatternRepos()` rejects any URL that does not start with `https://` or `ssh://` before invoking `git clone`, blocking `git://`, `file://`, and `ext::` SSRF/RCE vectors | SEC-32 |
+| Findings prompt injection | LLM tier-4 prompts sanitize all finding string fields (`name`, `severity`, `file`, `snippet`) via `sanitizeField()` / `sanitizeSnippet()` before `JSON.stringify` embedding | SEC-33 |
+| Glob-field ReDoS guard | `toolSearchInFiles()` rejects `glob` values longer than 500 characters before passing them to `globToRegex()`, matching the existing guard on the regex `pattern` field | SEC-34 |
