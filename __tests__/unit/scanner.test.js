@@ -25,6 +25,12 @@ const {
   scanPackageJson,
   scanEnvFiles,
   scanPromptFiles,
+  scanAuthChain,
+  scanMissingRateLimit,
+  scanMissingSecurityHeaders,
+  scanLockfileSync,
+  scanTsconfigTestExclusion,
+  scanVercelProtectionBypass,
   quickScan,
   printFindings,
   VULN_PATTERNS,
@@ -1453,5 +1459,311 @@ describe('detectAppFramework() — pkg.dependencies || {} false branch', () => {
       'package.json': JSON.stringify({ devDependencies: { react: '*' } }),
     });
     expect(detectAppFramework(tmp)).toBe('react');
+  });
+});
+
+// ─── tdd-patterns catalog gaps (10 patterns) ──────────────────────────────────
+
+describe('quickScan — tdd-patterns catalog gap line patterns', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  function scanFile(filename, content) {
+    tmp = makeTmpProject({ [filename]: content });
+    return quickScan(tmp);
+  }
+
+  test('detects Prototype Pollution Bracket — target[key] = source[key]', () => {
+    const findings = scanFile('src/merge.js', 'for (const key of Object.keys(source)) { target[key] = source[key]; }');
+    expect(findings.some(f => f.name === 'Prototype Pollution Bracket')).toBe(true);
+  });
+
+  test('does NOT flag safe Object.assign of known keys', () => {
+    const findings = scanFile('src/safe.js', 'obj.name = source.name;');
+    expect(findings.every(f => f.name !== 'Prototype Pollution Bracket')).toBe(true);
+  });
+
+  test('detects Excessive Agency Write Tool without confirmation gate', () => {
+    const findings = scanFile(
+      'src/mcp-server.js',
+      "server.tool('delete_records', async ({ table, where }) => { await db.delete(table); });"
+    );
+    expect(findings.some(f => f.name === 'Excessive Agency Write Tool')).toBe(true);
+  });
+
+  test('does NOT flag tool registered with options object (confirmation gate pattern)', () => {
+    const findings = scanFile(
+      'src/mcp-server.js',
+      "server.tool('delete_records', { requiresConfirmation: true }, async (args) => {});"
+    );
+    expect(findings.every(f => f.name !== 'Excessive Agency Write Tool')).toBe(true);
+  });
+
+  test('detects Hardcoded Transactional URL in confirm link', () => {
+    const findings = scanFile(
+      'src/mailer.js',
+      'const link = `https://myapp.com/auth/confirm?token=${token}`;'
+    );
+    expect(findings.some(f => f.name === 'Hardcoded Transactional URL')).toBe(true);
+  });
+
+  test('detects Transactional Bulk Email Header — Precedence: bulk', () => {
+    const findings = scanFile(
+      'src/lib/mailer.js',
+      "headers: { 'Precedence': 'bulk', 'X-Auto-Response-Suppress': 'OOF' }"
+    );
+    expect(findings.some(f => f.name === 'Transactional Bulk Email Header')).toBe(true);
+  });
+
+  test('detects DB Admin Auth Check via select(is_admin)', () => {
+    const findings = scanFile(
+      'src/api/admin.js',
+      "const { data: profile } = await db.from('profiles').select('is_admin').eq('id', user.id).single()"
+    );
+    expect(findings.some(f => f.name === 'DB Admin Auth Check')).toBe(true);
+  });
+});
+
+describe('scanAuthChain — Broken Auth Chain', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('flags Next.js API route POST without auth check', () => {
+    tmp = makeTmpProject({
+      'src/app/api/items/route.ts': [
+        "import { db } from '@/db'",
+        'export async function POST(request: Request) {',
+        "  const body = await request.json()",
+        "  await db.from('items').insert(body)",
+        '  return Response.json({ ok: true })',
+        '}',
+      ].join('\n'),
+    });
+    const findings = scanAuthChain(tmp);
+    expect(findings.some(f => f.name === 'Broken Auth Chain' && f.severity === 'CRITICAL')).toBe(true);
+  });
+
+  test('does NOT flag route that calls getUser', () => {
+    tmp = makeTmpProject({
+      'src/app/api/items/route.ts': [
+        'export async function POST(request: Request) {',
+        '  const { data: { user } } = await supabase.auth.getUser()',
+        '  if (!user) return new Response(null, { status: 401 })',
+        '  return Response.json({ ok: true })',
+        '}',
+      ].join('\n'),
+    });
+    expect(scanAuthChain(tmp).every(f => f.name !== 'Broken Auth Chain')).toBe(true);
+  });
+
+  test('quickScan includes Broken Auth Chain findings', () => {
+    tmp = makeTmpProject({
+      'src/app/api/items/route.js': 'export async function DELETE() { await db.delete("x") }',
+    });
+    expect(quickScan(tmp).some(f => f.name === 'Broken Auth Chain')).toBe(true);
+  });
+});
+
+describe('scanMissingRateLimit', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('flags login route POST without rate limit', () => {
+    tmp = makeTmpProject({
+      'src/app/api/auth/login/route.ts': [
+        'export async function POST(request: Request) {',
+        '  const { email, password } = await request.json()',
+        '  return Response.json({ token: "x" })',
+        '}',
+      ].join('\n'),
+    });
+    const findings = scanMissingRateLimit(tmp);
+    expect(findings.some(f => f.name === 'Missing Rate Limiting' && f.severity === 'HIGH')).toBe(true);
+  });
+
+  test('does NOT flag when rateLimit is present', () => {
+    tmp = makeTmpProject({
+      'src/app/api/auth/login/route.ts': [
+        "import { rateLimit } from '@/lib/rate-limit'",
+        'export async function POST(request: Request) {',
+        '  if (await rateLimit(request)) return new Response(null, { status: 429 })',
+        '  return Response.json({ ok: true })',
+        '}',
+      ].join('\n'),
+    });
+    expect(scanMissingRateLimit(tmp)).toHaveLength(0);
+  });
+});
+
+describe('scanMissingSecurityHeaders', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('flags Express app without helmet', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { express: '^4.0.0' } }),
+      'src/server.js': "const app = express();\napp.get('/', (req, res) => res.send('ok'));",
+    });
+    const findings = scanMissingSecurityHeaders(tmp);
+    expect(findings.some(f => f.name === 'Missing Security Headers' && f.severity === 'HIGH')).toBe(true);
+  });
+
+  test('does NOT flag when helmet is a dependency', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { express: '^4.0.0', helmet: '^7.0.0' } }),
+      'src/server.js': 'const app = express(); app.use(helmet());',
+    });
+    expect(scanMissingSecurityHeaders(tmp)).toHaveLength(0);
+  });
+
+  test('does NOT flag Next.js app with headers() in next.config', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { next: '^14.0.0' } }),
+      'next.config.js': "module.exports = { async headers() { return [{ source: '/(.*)', headers: [{ key: 'X-Frame-Options', value: 'DENY' }] }] } }",
+    });
+    expect(scanMissingSecurityHeaders(tmp)).toHaveLength(0);
+  });
+
+  test('skips projects that are neither Express nor Next', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { lodash: '*' } }),
+    });
+    expect(scanMissingSecurityHeaders(tmp)).toHaveLength(0);
+  });
+});
+
+describe('scanLockfileSync', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('flags package.json deps missing from package-lock.json', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({
+        dependencies: { express: '^4.0.0', 'left-pad': '^1.0.0' },
+      }),
+      'package-lock.json': JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          '': {},
+          'node_modules/express': { version: '4.18.0' },
+          // left-pad intentionally missing
+        },
+      }),
+    });
+    const findings = scanLockfileSync(tmp);
+    expect(findings.some(f => f.name === 'Lockfile Out of Sync' && f.severity === 'HIGH')).toBe(true);
+    expect(findings[0].snippet).toMatch(/left-pad/);
+  });
+
+  test('returns empty when lockfile covers all deps', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { express: '^4.0.0' } }),
+      'package-lock.json': JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          '': {},
+          'node_modules/express': { version: '4.18.0' },
+        },
+      }),
+    });
+    expect(scanLockfileSync(tmp)).toHaveLength(0);
+  });
+
+  test('flags pnpm-lock.yaml missing packages', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { lodash: '^4.0.0', chalk: '^5.0.0' } }),
+      'pnpm-lock.yaml': [
+        'lockfileVersion: "9.0"',
+        '',
+        'packages:',
+        '  /lodash@4.17.21:',
+        '    resolution: {integrity: sha512-fake}',
+      ].join('\n'),
+    });
+    const findings = scanLockfileSync(tmp);
+    expect(findings.some(f => f.name === 'Lockfile Out of Sync')).toBe(true);
+    expect(findings[0].snippet).toMatch(/chalk/);
+  });
+
+  test('returns empty when no lockfile exists', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { express: '*' } }),
+    });
+    expect(scanLockfileSync(tmp)).toHaveLength(0);
+  });
+});
+
+describe('scanTsconfigTestExclusion', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('flags tsconfig without test excludes when vitest is present', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ devDependencies: { vitest: '^1.0.0' } }),
+      'vitest.config.ts': 'export default {}',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { strict: true },
+        exclude: ['node_modules'],
+      }),
+    });
+    const findings = scanTsconfigTestExclusion(tmp);
+    expect(findings.some(f => f.name === 'Tsconfig Test Exclusion' && f.severity === 'MEDIUM')).toBe(true);
+  });
+
+  test('does NOT flag when test globs are excluded', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ devDependencies: { vitest: '^1.0.0' } }),
+      'vitest.config.ts': 'export default {}',
+      'tsconfig.json': JSON.stringify({
+        compilerOptions: { strict: true },
+        exclude: ['node_modules', '**/*.test.ts', '**/__tests__/**', 'vitest.config.ts'],
+      }),
+    });
+    expect(scanTsconfigTestExclusion(tmp)).toHaveLength(0);
+  });
+
+  test('skips projects without a test runner', () => {
+    tmp = makeTmpProject({
+      'package.json': JSON.stringify({ dependencies: { lodash: '*' } }),
+      'tsconfig.json': JSON.stringify({ compilerOptions: {} }),
+    });
+    expect(scanTsconfigTestExclusion(tmp)).toHaveLength(0);
+  });
+});
+
+describe('scanVercelProtectionBypass', () => {
+  let tmp;
+  afterEach(() => tmp && rmrf(tmp));
+
+  test('flags e2e test hitting preview URL without bypass header', () => {
+    tmp = makeTmpProject({
+      'e2e/preview.spec.ts': [
+        "const base = process.env.VERCEL_URL",
+        "test('health', async () => {",
+        "  const res = await fetch(`https://${base}/api/health`)",
+        '  expect(res.ok).toBe(true)',
+        '})',
+      ].join('\n'),
+    });
+    const findings = scanVercelProtectionBypass(tmp);
+    expect(findings.some(f => f.name === 'Vercel Protection Bypass Missing' && f.severity === 'MEDIUM')).toBe(true);
+  });
+
+  test('does NOT flag when bypass header is present', () => {
+    tmp = makeTmpProject({
+      'e2e/preview.spec.ts': [
+        "const base = process.env.VERCEL_URL",
+        "const bypass = process.env.VERCEL_AUTOMATION_BYPASS_SECRET",
+        "await fetch(`https://${base}/api/health`, { headers: { 'x-vercel-protection-bypass': bypass } })",
+      ].join('\n'),
+    });
+    expect(scanVercelProtectionBypass(tmp)).toHaveLength(0);
+  });
+
+  test('does NOT flag non-test source mentioning VERCEL_URL', () => {
+    tmp = makeTmpProject({
+      'src/lib/site-url.ts': "export const url = process.env.VERCEL_URL || 'https://myapp.com'",
+    });
+    expect(scanVercelProtectionBypass(tmp)).toHaveLength(0);
   });
 });
