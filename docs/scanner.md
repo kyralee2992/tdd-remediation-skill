@@ -152,7 +152,7 @@ The rule: suppress when there is an **odd** number of backticks before the match
 
 ## Adding a new pattern
 
-All vulnerability patterns live in the `VULN_PATTERNS` array in `lib/scanner.js`. Each entry is:
+All line-level vulnerability patterns live in the `VULN_PATTERNS` array in `lib/scanner.js`. Each entry is:
 
 ```javascript
 {
@@ -177,4 +177,17 @@ Prompt-specific patterns live in `PROMPT_PATTERNS`:
 }
 ```
 
-After adding a pattern, add a corresponding unit test in `__tests__/unit/scanner.test.js` with both a true-positive and a false-positive case.
+### Structural scanners
+
+Some catalog patterns cannot be expressed as a single-line regex (absence checks, lockfile sync, tsconfig). Those live as dedicated functions wired into `quickScan()`:
+
+| Function | Finding name |
+|---|---|
+| `scanAuthChain()` | Broken Auth Chain |
+| `scanMissingRateLimit()` | Missing Rate Limiting |
+| `scanMissingSecurityHeaders()` | Missing Security Headers |
+| `scanLockfileSync()` | Lockfile Out of Sync |
+| `scanTsconfigTestExclusion()` | Tsconfig Test Exclusion |
+| `scanVercelProtectionBypass()` | Vercel Protection Bypass Missing |
+
+After adding a pattern (line-level or structural), add true-positive and false-positive cases in `__tests__/unit/scanner.test.js`.
