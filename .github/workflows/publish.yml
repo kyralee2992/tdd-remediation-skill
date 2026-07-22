@@ -5,6 +5,12 @@ on:
     tags:
       - 'v*'
 
+# OIDC for npm Trusted Publishing (preferred). Token publish still works
+# when secrets.NPM_TOKEN is a valid granular automation token.
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     name: Publish
@@ -29,7 +35,14 @@ jobs:
       - name: Run security tests
         run: npm run test:security
 
+      - name: Verify package metadata
+        run: |
+          node -e "const p=require('./package.json'); if(!p.name.startsWith('@')) process.exit(0); console.log('Scoped package:', p.name, p.version)"
+          npm pkg get name version repository.url
+
+      # Prefer provenance when publishing (works with Trusted Publishing OIDC
+      # and with granular tokens that allow provenance).
       - name: Publish
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
